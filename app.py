@@ -1751,6 +1751,42 @@ def system_config():
         t=t,
     )
 
+@app.route("/verify-kobo-token", methods=["POST"])
+def verify_kobo_token():
+    if not session.get("admin_logged_in"):
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    server = (data.get("server") or "").strip().rstrip("/")
+    token = (data.get("token") or "").strip()
+
+    if not server or not token:
+        return jsonify({"ok": False, "error": "Server and token are required."}), 400
+
+    headers = {"Authorization": f"Token {token}"}
+
+    for path in ("/api/v2/me/?format=json", "/me/?format=json"):
+        try:
+            r = requests.get(f"{server}{path}", headers=headers, timeout=10)
+        except Exception as e:
+            print("Kobo verify failed:", e)
+            return jsonify({"ok": False, "error": "Could not reach the server."}), 200
+
+        if r.status_code == 200:
+            try:
+                j = r.json()
+            except Exception:
+                continue
+            return jsonify({
+                "ok": True,
+                "username": j.get("username", ""),
+                "email": j.get("email", ""),
+            })
+
+        if r.status_code in (401, 403):
+            return jsonify({"ok": False, "error": "Token not valid for this server."}), 200
+
+    return jsonify({"ok": False, "error": "Token not valid for this server."}), 200
 
 @app.route("/api/program-attributes/<int:program_id>")
 def api_program_attributes(program_id):
