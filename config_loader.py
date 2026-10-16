@@ -1,5 +1,6 @@
 import json
 import os
+
 from cryptography.fernet import Fernet, InvalidToken
 
 # Optional: load a local .env file during development so the env-managed fields
@@ -18,69 +19,58 @@ except Exception:
 #
 #       config key      ->   ENV VAR NAME
 #
-# Anything NOT listed here stays in system_config.json. Right now that means
-# the fields editable from the System Config page (KOBO_SERVER, KOBO_TOKEN,
-# PROGRAMS) plus COLUMN_TO_MATCH_PER_PROGRAM, which is written at runtime from
-# the program-config page and therefore must remain writable in the JSON file.
+# Only list fields that are actually set in Azure App Settings. save_config()
+# strips every listed key from system_config.json whether or not the env var
+# exists, so listing a field Azure does not set silently deletes it from the
+# JSON on the next save (this previously wiped programTitle, programCurrency
+# and nationalSociety).
 #
-# To move a field in or out of env management, just edit this dict.
+# Anything NOT listed here stays in system_config.json: KOBO_SERVER,
+# KOBO_TOKEN, PROGRAMS, programTitle, programCurrency, nationalSociety, and
+# COLUMN_TO_MATCH_PER_PROGRAM.
+#
+# To move a field in or out of env management, edit this dict AND add or
+# remove the matching App Setting on every instance.
 # ---------------------------------------------------------------------------
 ENV_MANAGED_FIELDS = {
-    "url121": "URL_121",
-    "username121": "USERNAME_121",
-    "password121": "PASSWORD_121",
+    "url121":         "URL_121",
+    "username121":    "USERNAME_121",
+    "password121":    "PASSWORD_121",
     "ENCRYPTION_KEY": "ENCRYPTION_KEY",
-    "programCurrency": "PROGRAM_CURRENCY",
-    "programTitle": "PROGRAM_TITLE",
-    "COLUMN_TO_MATCH": "COLUMN_TO_MATCH",
-    "nationalSociety": "NATIONAL_SOCIETY",
 }
 
-# KoBo credentials are encrypted at rest in system_config.json
-ENCRYPTED_FIELDS = {"KOBO_TOKEN", "KOBO_SERVER"}
 
+# ---------------------------------------------------------------------------
+# Secrets encrypted at rest inside system_config.json.
+#
+# These are values a user sets through the System Config page, so they cannot
+# live in env vars — but they should not sit in plaintext on the App Service
+# volume either. They are Fernet-encrypted on save and decrypted on load.
+#
+# The key (ENCRYPTION_KEY) is env-managed and stripped by save_config(), so it
+# is never written to disk beside the ciphertext it protects.
+#
+# Decryption happens in load_config() — ONE choke point. Every consumer
+# (app.py's Kobo calls, offline_sync.py, anything added later) receives
+# plaintext without needing to know encryption exists. Do not decrypt at the
+# call sites: that is how a value ends up encrypted in one code path and
+# plaintext in another.
+# ---------------------------------------------------------------------------
+SECRET_FIELDS = {"KOBO_TOKEN"}
 
-def _get_cipher():
-    """Get or create a Fernet cipher using ENCRYPTION_KEY from environment.
+# Fields that an earlier release (main, 2026-07-14 "encrypt kobo credentials
+# before saving") encrypted on save but which are no longer secret. They are
+# DECRYPTED on load so instances that saved under that release keep working,
+# but never re-encrypted: the next save_config() writes them as plaintext,
+# which retires the legacy ciphertext. Once every instance has re-saved its
+# System Config, this set can be emptied.
+LEGACY_ENCRYPTED_FIELDS = {"KOBO_SERVER"}
 
-    If ENCRYPTION_KEY is not set, encryption/decryption is skipped (plaintext mode).
-    """
-    key = os.getenv("ENCRYPTION_KEY")
-    if not key:
-        return None
-    try:
-        return Fernet(key.encode())
-    except ValueError as e:
-        print(f"Warning: Invalid ENCRYPTION_KEY format: {e}")
-        return None
-
-
-def _encrypt_value(value, cipher=None):
-    """Encrypt a string value using Fernet, if cipher is available."""
-    if not cipher or not value:
-        return value
-    try:
-        encrypted = cipher.encrypt(value.encode())
-        return encrypted.decode()
-    except (InvalidToken, UnicodeDecodeError) as e:
-        print(f"Warning: Encryption failed: {e}")
-        return value
-
-
-def _decrypt_value(value, cipher=None):
-    """Decrypt a string value using Fernet if it looks encrypted."""
-    if not cipher or not value or not isinstance(value, str):
-        return value
-    try:
-        decrypted = cipher.decrypt(value.encode())
-        return decrypted.decode()
-    except InvalidToken:
-        # If decryption fails, assume it's plaintext (backward compatibility)
-        return value
-    except (UnicodeDecodeError, ValueError) as e:
-        # Handle encoding errors gracefully
-        print(f"Warning: Failed to decode decrypted value: {e}")
-        return value
+# Fernet tokens always begin with this. Used to tell an encrypted value from a
+# plaintext one so that both keep working: a token typed straight into the JSON
+# by hand, or saved before encryption existed, must not be mangled — and a
+# re-save must never double-encrypt.
+_FERNET_PREFIX = "gAAAA"
 
 
 def _get_paths():
@@ -97,6 +87,83 @@ def _get_paths():
         os.path.join(base, "system_config.json"),
         os.path.join(base, "display_config.json"),
     )
+
+
+def _fernet():
+    """Cipher built from the env-managed ENCRYPTION_KEY, or None if unusable."""
+    key = os.getenv("ENCRYPTION_KEY")
+    if not key:
+        return None
+    try:
+        return Fernet(key.encode())
+    except Exception:
+        return None
+
+
+def _looks_encrypted(value):
+    return isinstance(value, str) and value.startswith(_FERNET_PREFIX)
+
+
+def _decrypt_secrets(data):
+    """Replace encrypted secrets with their plaintext, in place.
+
+    Raises rather than swallowing. A silently-undecrypted secret is exactly the
+    failure that took photo sync down: every Kobo request went out with
+    "Authorization: Token gAAAAAB..." and came back 401, while the sync reported
+    success and the UI showed a green tick. Fail loudly and name the field.
+
+    Also decrypts LEGACY_ENCRYPTED_FIELDS, with the same fail-loud rule: an
+    undecrypted KOBO_SERVER would send every Kobo call to "gAAAA.../api/v2/...".
+    """
+    cipher = None
+    for key in SECRET_FIELDS | LEGACY_ENCRYPTED_FIELDS:
+        value = data.get(key)
+        if not _looks_encrypted(value):
+            continue  # plaintext (hand-edited, or pre-encryption) — leave as-is
+
+        if cipher is None:
+            cipher = _fernet()
+        if cipher is None:
+            raise RuntimeError(
+                f"{key} is encrypted in system_config.json but ENCRYPTION_KEY is "
+                "missing or invalid, so it cannot be decrypted. Set ENCRYPTION_KEY "
+                "in the app settings."
+            )
+
+        try:
+            data[key] = cipher.decrypt(value.encode()).decode()
+        except InvalidToken:
+            raise RuntimeError(
+                f"{key} could not be decrypted with the current ENCRYPTION_KEY. "
+                "The key was probably rotated after this value was saved. "
+                "Re-enter the value on the System Config page to store it under "
+                "the new key."
+            )
+    return data
+
+
+def _encrypt_secrets(data):
+    """Encrypt secret fields prior to writing. Never double-encrypts.
+
+    With no usable key the values are left as they are — better a readable
+    config than one encrypted under a key nobody has.
+
+    Only SECRET_FIELDS are encrypted. LEGACY_ENCRYPTED_FIELDS are deliberately
+    written back as plaintext.
+    """
+    cipher = None
+    for key in SECRET_FIELDS:
+        value = data.get(key)
+        if not isinstance(value, str) or not value or _looks_encrypted(value):
+            continue
+
+        if cipher is None:
+            cipher = _fernet()
+        if cipher is None:
+            continue
+
+        data[key] = cipher.encrypt(value.encode()).decode()
+    return data
 
 
 def _apply_env_overrides(data):
@@ -120,14 +187,9 @@ def load_config():
     if os.path.exists(system_path):
         with open(system_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-
-    # Decrypt KoBo credentials if present
-    cipher = _get_cipher()
-    for field in ENCRYPTED_FIELDS:
-        if field in data:
-            data[field] = _decrypt_value(data[field], cipher)
-
-    return _apply_env_overrides(data)
+    # Env overrides FIRST: ENCRYPTION_KEY has to be in place before anything
+    # can be decrypted with it.
+    return _decrypt_secrets(_apply_env_overrides(data))
 
 
 def save_config(data):
@@ -137,17 +199,12 @@ def save_config(data):
     the environment (including secrets like password121 and ENCRYPTION_KEY) are
     never baked back into system_config.json by a UI save or a runtime write.
 
-    KoBo credentials (KOBO_SERVER, KOBO_TOKEN) are encrypted before saving.
+    Fields in SECRET_FIELDS are encrypted on the way out. Callers pass plaintext
+    (that is what load_config gave them) and never need to think about it.
     """
     system_path, _ = _get_paths()
     to_save = {k: v for k, v in data.items() if k not in ENV_MANAGED_FIELDS}
-
-    # Encrypt KoBo credentials before saving
-    cipher = _get_cipher()
-    for field in ENCRYPTED_FIELDS:
-        if field in to_save:
-            to_save[field] = _encrypt_value(to_save[field], cipher)
-
+    to_save = _encrypt_secrets(dict(to_save))
     with open(system_path, "w", encoding="utf-8") as f:
         json.dump(to_save, f, indent=2, ensure_ascii=False)
 

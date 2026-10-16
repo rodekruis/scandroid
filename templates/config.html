@@ -187,7 +187,17 @@
     }
     .prefill-note.show { display: inline-flex; }
     .prefill-note svg { width: 15px; height: 15px; }
-
+    /* Uniqueness verdict for the lookup field. Colour carries the state but the
+       text says it too, so it still reads in greyscale. */
+    .lookup-check {
+      display: none; margin-top: 12px; font-size: 0.85rem; font-weight: 600;
+      line-height: 1.4; padding: 10px 12px; border-radius: 10px;
+    }
+    .lookup-check.show    { display: block; }
+    .lookup-check.is-busy { color: var(--muted); background: #f9fafb; border: 1px solid var(--line); }
+    .lookup-check.is-ok   { color: #166534;     background: var(--ok-bg); border: 1px solid #bbf7d0; }
+    .lookup-check.is-warn { color: #92400e;     background: #fffbeb;      border: 1px solid #fcd34d; }
+    .lookup-check.is-bad  { color: #991b1b;     background: #fef2f2;      border: 1px solid #fecaca; }
     /* ---------- TOGGLE ---------- */
     .toggle-row {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -456,7 +466,37 @@
           </label>
         </div>
       </section>
-
+      <!-- ============ BENEFICIARY LOOKUP ============ -->
+      <section class="sect" id="lookupCard">
+        <div class="sect-head">
+          <span class="logo-tile fields">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          </span>
+          <div class="sh-text">
+            <p class="name">{{ t.lookup_section_title or "Beneficiary lookup" }}</p>
+            <p class="sub">{{ t.lookup_section_hint or "Which identifier staff type when the QR code can't be used." }}</p>
+          </div>
+        </div>
+        <div class="sect-body">
+          <div class="tbl-scroll">
+            <table>
+              <thead>
+                <tr><th>{{ t.lookup_field_label or "Look up by" }}</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <select id="lookupField">
+                      <option value="referenceId">{{ t.lookup_field_default or "Reference ID (default)" }}</option>
+                    </select>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="lookupCheck" class="lookup-check"></div>
+        </div>
+      </section>
     </div>
 
     <div id="formError" class="inline-error hidden">
@@ -733,7 +773,97 @@ function togglePhotoFields() {
   const on = document.getElementById('photoEnabled').checked;
   document.getElementById('photoGrid').classList.toggle('disabled', !on);
 }
+/* ============================================================
+   LOOKUP FIELD
+   Options are rebuilt from allowedAttributes on every program
+   switch, exactly like the photoKey select.
+   ============================================================ */
+function rebuildLookupOptions(selectedKey) {
+  const sel = document.getElementById('lookupField');
+  if (!sel) return;
+  const want = selectedKey != null ? selectedKey : (sel.value || 'referenceId');
+  sel.innerHTML = '';
 
+  const def = document.createElement('option');
+  def.value = 'referenceId';
+  def.textContent = "{{ t.lookup_field_default or 'Reference ID (default)' }}";
+  sel.appendChild(def);
+
+  allowedAttributes.forEach(attr => {
+    if (attr.name === 'referenceId') return;   // already the default option
+    const opt = document.createElement('option');
+    opt.value = attr.name;
+    opt.textContent = attr.label;
+    sel.appendChild(opt);
+  });
+
+  // A saved field that 121 no longer exposes: the server already reverted it
+  // in the strict-mode block, so falling back here just keeps the two in step.
+  sel.value = [...sel.options].some(o => o.value === want) ? want : 'referenceId';
+}
+
+function setLookupCheck(text, state) {
+  const el = document.getElementById('lookupCheck');
+  if (!el) return;
+  el.className = 'lookup-check' + (text ? ' show ' + state : '');
+  el.textContent = text || '';
+}
+
+// Ask 121 whether the chosen attribute is actually unique. Advisory only —
+// a duplicate is usually a data-quality problem to fix in 121, not a reason to
+// forbid the field, so this never blocks saving.
+let lookupCheckToken = 0;
+async function checkLookupUniqueness() {
+  const field = (document.getElementById('lookupField') || {}).value || 'referenceId';
+  const token = ++lookupCheckToken;
+
+  if (field === 'referenceId') { setLookupCheck('', null); return; }
+
+  setLookupCheck("{{ t.lookup_checking or 'Checking whether this field is unique in 121…' }}", 'is-busy');
+
+  try {
+    const res = await fetch(
+      `/api/program-field-uniqueness/${encodeURIComponent(activeProgramId)}` +
+      `?field=${encodeURIComponent(field)}`
+    );
+    if (token !== lookupCheckToken) return;   // a newer selection won
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (token !== lookupCheckToken) return;
+
+    const parts = [];
+    if (!d.unique) {
+      parts.push(
+        "{{ t.lookup_not_unique or 'Not unique: {values} value(s) are shared by {rows} registrations. Staff will not be able to identify those people by this field.' }}"
+          .replace('{values}', d.duplicateValues).replace('{rows}', d.affectedRegistrations)
+      );
+    }
+    if (d.blank) {
+      parts.push(
+        "{{ t.lookup_has_blanks or '{n} registration(s) have no value for this field and cannot be found by it.' }}"
+          .replace('{n}', d.blank)
+      );
+    }
+    if (d.truncated) {
+      parts.push(
+        "{{ t.lookup_partial_check or 'Checked {checked} of {total} registrations — the result may be incomplete.' }}"
+          .replace('{checked}', d.checked).replace('{total}', d.reportedTotal)
+      );
+    }
+
+    if (!parts.length) {
+      setLookupCheck("{{ t.lookup_unique_ok or 'Unique across all registrations in this program.' }}", 'is-ok');
+    } else {
+      setLookupCheck(parts.join(' '), d.unique ? 'is-warn' : 'is-bad');
+    }
+  } catch (e) {
+    if (token !== lookupCheckToken) return;
+    console.warn('lookup uniqueness check failed:', e);
+    setLookupCheck("{{ t.lookup_check_failed or 'Could not check uniqueness against 121 right now.' }}", 'is-warn');
+  }
+}
+
+document.getElementById('lookupField').addEventListener('change', checkLookupUniqueness);
 // Prepopulate photo labels from the selected Kobo image field.
 // Kobo ships a single label per image field, so it seeds each empty
 // language input as a starting value that staff can then edit.
@@ -770,6 +900,10 @@ function loadConfig() {
   // QR scanning: default ON unless explicitly disabled
   document.getElementById('qrEnabled').checked = programConfig.qr?.enabled !== false;
 
+  // Lookup field: default to the reference ID when unset.
+  rebuildLookupOptions(programConfig.lookup?.field || 'referenceId');
+  setLookupCheck('', null);
+  checkLookupUniqueness();
   document.getElementById('photoPrefillNote').classList.remove('show');
 
   togglePhotoFields();
@@ -828,6 +962,7 @@ document.getElementById('configForm').addEventListener('submit', async e => {
     programId: activeProgramId,
     fields,
     qr: { enabled: document.getElementById('qrEnabled').checked },
+    lookup: { field: document.getElementById('lookupField').value || 'referenceId' },
     photo: {
       enabled: document.getElementById('photoEnabled').checked,
       field_name: document.getElementById('photoKey').value,
@@ -851,6 +986,7 @@ document.getElementById('configForm').addEventListener('submit', async e => {
       FULL_CONFIG.programs[activeProgramId] = {
         fields: result.fields,
         qr: result.qr,
+        lookup: result.lookup,
         photo: result.photo
       };
       showToast('{{ t.saved_successfully }}', 'success');
@@ -890,6 +1026,12 @@ document.getElementById('programSelector').addEventListener('change', async e =>
         if (f.name === currentVal) opt.selected = true;
         photoKey.appendChild(opt);
       });
+      // The attribute list belongs to the new program — rebuild the lookup
+      // options from it too, or the selector would still offer the previous
+      // program's fields.
+      rebuildLookupOptions(
+        (FULL_CONFIG?.programs?.[activeProgramId]?.lookup?.field) || 'referenceId'
+      );   
       syncSearchInput(photoKey);
     }
   } catch (err) {

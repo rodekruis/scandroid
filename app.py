@@ -851,57 +851,98 @@ def _design_for_client(design):
     }
 
 
+
 translations = {
 "en": {
-    "title": "Beneficiary Information",
-    "name": "Name",
-    "dob": "Date of Birth",
-    "photo": "Photo",
-    "payment_approved": "Payment Approved",
-    "payment_rejected": "Payment Rejected",
-    "participant_withdraws": "Participant Withdraws",
-    "language": "Language",
-    "login": "Login for Administrator",
-    "enter_password": "Enter Password",
-    "submit": "Submit",
-    "payment_status": "Payment Status",
-    "confirm_person": "Confirm this is the correct person",
-    "rejection_reason": "Reason for Rejection",
-    "already_scanned": "This person has already been scanned and submitted to 121.",
-    "success_message": "You may now scan the next beneficiary.",
-    "already_submitted_page": "This beneficiary's payment has already been submitted. If you need support, contact support@121.global",
-    "config_title": "Configure Fields to Display",
-    "field_key": "Kobo Photo Field",
-    "label_en": "Label (EN)",
-    "label_fr": "Label (FR)",
-    "label_ar": "Label (AR)",
-    "remove": "Remove",
-    "add_field": "Add Field",
+    # ---- Shared chrome (header / footer / buttons on every page) ----
+    "footer_dev": "Developed by 510 @ The Netherlands Red Cross",
+    "footer_support": "If you need support contact jharrison@redcross.nl",
+    "logout": "Logout",
+    "back_to_dashboard": "Back",
+    "back_to_programs": "Back to Programs",
+    "go_back": "Go Back",
     "save": "Save",
     "saved_successfully": "Saved successfully",
     "failed_to_save": "Failed to save",
-    "logout": "Logout",
-    "config_system": "System Configuration",
-    "config_display": "Configure Fields to Display",
+    "remove": "Remove",
+    "submit": "Submit",
+    "program": "Program",
+    "program_id": "Select Program",
+    "select_option": "Select...",
+
+    # ---- home.html ----
+    "home_title": "Welcome",
+    "home_question": "Who are you?",
+    "home_admin": "Administrator",
+    "home_fsp": "Distribution Staff",
+
+    # ---- admin_login.html / fsp_login.html (errors raised in app.py) ----
+    "login": "Login for Administrator",
     "fsp_login": "Login for Distribution Staff",
+    "enter_password": "Enter Password",
+    "login_error": "Incorrect username or password.",
+    "wrong_credentials": "Incorrect username or password.",
+    "api_unreachable": "Unable to reach the login server. Please try again.",
+
+    # ---- fsp_programs.html ----
     "program_select_title": "Select a Program",
-    "back_to_programs": "Back to Programs",
     "program_select_subtitle": "Choose the program you want to work with",
-    "fsp_sync_title": "Prepare to Scan",
-    "sync_latest": "Sync Latest Records",
-    "syncing": "Syncing...",
-    "sync_error": "❌ Failed to sync. Please try again.",
-    "sync_initial": "Click sync to see how many beneficiaries are ready for offline validation.",
-    "sync_complete": "✅ {count} beneficiaries ready for offline validation.",
-    "step1": "Step 1. Sync with 121",
-    "step2": "Step 2. Save Latest Records",
-    "step3": "Step 3. Scan QR Codes",
-    "online": "Online",
-    "offline": "Offline",
+
+    # ---- admin_dashboard.html ----
+    "admin_dashboard_title": "Admin Dashboard",
+    "admin_dashboard_subtitle": "Manage your 121 Scan configuration and voucher tools.",
+    "config_system": "System Configuration",
+    "config_system_desc": "Edit API keys, endpoints, and system parameters.",
+    "config_display": "Configure Fields to Display",
+    "config_display_desc": "Configure which fields and details are shown to FSPs.",
+    "generate_vouchers": "Generate Vouchers",
+    "generate_vouchers_desc": "Generate QR vouchers for printing and distribution.",
+    "voucher_design": "Voucher Design",
+    "voucher_design_desc": "Customise the title, subtitle and logos printed on each program's vouchers.",
+
+    # ---- system_config.html ----
+    "kobo_api_token": "API token",
+    "kobo_token_hint": "Found in KoboToolbox under Account settings → Security → API token.",
+    "verify_token": "Verify token",
+    "verifying": "Verifying…",
+    "verify_unreachable": "Could not reach the server.",
+    "enter_token_first": "Enter a new token above, then verify.",
+    "token_invalid": "Token not valid for this server.",
+    "token_linked_to": "Token linked to",
+    "program_map_hint": "Each 121 program is matched to the KoboToolbox form that collects its data.",
+
+    # ---- config.html (field display configuration) ----
+    "config_title": "Configure Fields to Display",
+    "config_subtitle": "Choose which fields appear during a scan and set their labels in each language. Photo capture pulls its options from the program's KoboToolbox form.",
+    "config_program_hint": "Settings below apply to the selected program",
+    "config_select_or_delete": "Please select a field or delete the highlighted row(s) before saving.",
+    "fields_section_title": "Displayed fields",
+    "fields_section_hint": "Pick a field, then adjust its label per language. Labels prefill automatically and can be edited.",
+    "field_key": "Kobo Photo Field",
+    "field_name_121": "121 Field Name",
+    "label_en": "Label (EN)",
+    "label_fr": "Label (FR)",
+    "label_ar": "Label (AR)",
+    "add_field": "Add Field",
+    "select_field_121": "Select field",
+    "editable": "Editable",
+    "editable_hint": "Turn on to let distribution staff change this field during a scan. Edits are pushed back to 121 with the payment.",
+    "editable_on": "On",
+    "editable_off": "Off",
+    "scan_config_title": "Scan Method",
+    "scan_section_hint": "Choose how beneficiaries are identified.",
+    "enable_qr_scan": "Enable QR code scanning",
+    "enable_qr_scan_hint": "When off, this program uses manual code entry only (no QR camera).",
+    "photo_config_title": "Photo Field Configuration",
+    "photo_section_hint": "Maps to an image question in the program's KoboToolbox form. Labels prefill from Kobo.",
+    "enable_photo_field": "Enable photo field display",
+    "enable_photo_field_hint": "When on, staff can attach a photo to the selected Kobo image field.",
+    "kobo_prefill_note": "Labels filled from KoboToolbox — edit any if needed",
+
+    # ---- scan.html ----
     "scan_title": "Scan QR",
-    "code_entry_title": "Enter code",
-    "back_to_dashboard": "Back",
     "scan_hint": "Point the camera at the QR code.",
+    "code_entry_title": "Enter code",
     "code_entry_hint": "Enter the beneficiary's unique code below.",
     "no_qr_btn": "Can't scan QR?",
     "manual_code_label": "Enter code manually",
@@ -913,111 +954,76 @@ translations = {
     "camera_denied": "Camera permission denied or not available.",
     "scanning": "Scanning…",
     "starting_camera": "Starting camera…",
-    "footer_dev": "Developed by 510 @ The Netherlands Red Cross",
-    "footer_support": "If you need support contact jharrison@redcross.nl",
-    "kobo_info": "Kobo Information",
-    "kobo_token": "Kobo API Key",
-    "asset_id": "Kobo Asset ID",
-    "fsp_password": "Set Password for FSPs",
-    "password": "Password",
-    "encryption_settings": "Encryption Settings",
-    "encryption_key": "Encryption Key",
-    "encryption_warning": "Used to decrypt encrypted fields. If incorrect, offline validation will stop working.",
-    "encryption_toggle_warning": "I understand changing this may break the system if incorrect.",
-    "info_121": "121 Information",
-    "url121": "121 URL",
-    "username121": "121 Username",
-    "program_id": "Select Program",
-    "payment_id": "Payment ID",
-    "column_to_match": "Field to Match for Payment (e.g., phoneNumber)",
-    "column_to_match_info": "This field is selected in the Field Display Config page.",
-    "use_for_matching": "Use for Matching Payments",
-    "photo_config_title": "Photo Field Configuration",
-    "enable_photo_field": "Enable photo field display",
-    "scan_config_title": "Scan Method",
-    "enable_qr_scan": "Enable QR code scanning",
-    "enable_qr_scan_hint": "When off, this program uses manual code entry only (no QR camera).",
-    "home_question": "Who are you?",
-    "home_admin": "Administrator",
-    "home_fsp": "Distribution Staff",
+    "scan_trouble_hint": "Still trying to read the code — hold steady and move a little closer.",
+    "decoder_unavailable": "The scanner could not start on this device. Enter the Reference ID printed below the QR code using the box below.",
+    "no_read_banner": "Can’t read this QR code",
+    "no_read_banner_sub": "Type the Reference ID printed under the QR code into the box below.",
+    "no_read_hint": "This QR code can’t be read — it may be blurred, faded or low quality. Enter the Reference ID printed below the QR code using the box below.",
+
+    # ---- fsp_admin.html (connection state, counters, send) ----
+    "current_program": "Program",
+    "status_online": "Online",
+    "status_online_sub": "You have internet",
+    "status_offline": "No connection",
+    "status_offline_sub": "Check your signal",
+    "status_offline_mode": "Offline mode",
+    "status_offline_mode_sub": "The app will not use the internet",
+    "work_offline": "Work offline",
+    "go_back_online": "Go back online",
+    "beneficiaries_ready_to_scan": "Ready to scan:",
+    "last_synced": "Last synced:",
+    "cannot_sync_offline": "Cannot sync while offline",
+    "people_scanned": "People scanned:",
+    "total_amount": "Total amount:",
+    "payments_ready_send": "Payments ready to send",
+    "last_payments_submit": "Last submission:",
+    "cannot_send_offline": "Cannot send while offline",
     "payment_submit_success": "✅ Payments submitted successfully!",
     "payment_submit_failed": "❌ Failed to submit",
+    "no_payments": "No payments ready to send.",
+
+    # ---- beneficiary_offline.html ----
+    "title": "Beneficiary Information",
+    "decryption_enabled": "Decryption enabled",
+    "loading_photo": "Loading photo…",
+    "payment_amount": "Payment Amount",
+    "multiple_payments": "This beneficiary has more than one payment on record. Select the one you are distributing.",
+    "select_payment": "Select a payment",
+    "selected": "Selected",
+    "all_collected": "All payments for this beneficiary have already been collected.",
+    "payment_approved": "Approve",
+    "payment_rejected": "Skip",
+    "enter_value": "Enter value",
+
+    # ---- success_offline.html ----
+    "success_title": "Successfully submitted",
+    "success_message": "You may now scan the next beneficiary.",
+    "payments_ready": "Payments ready to push to 121:",
+    "scan_next": "Scan next beneficiary",
+    "go_home": "Finished scanning? Go to homepage",
+
+    # ---- invalid-qr.html ----
+    "invalid_qr_title": "Invalid QR Code",
+    "invalid_qr_message": "This QR code cannot be used.",
+    "checking_reason": "Checking reason…",
+    "reason_used": "This QR code has already been used.",
+    "reason_invalid": "The QR code is invalid or unrecognized.",
+    "reason_no_record": "This QR code does not match any stored beneficiary.",
+    "reason_database": "There was a problem reading offline data. Please try again.",
+
+    # ---- vouchers.html (upload + field order) ----
     "voucher_generator": "Voucher Generator",
     "csv_hint": "Upload a CSV or Excel file with referenceId and any extra fields to print",
     "choose_csv": "Choose CSV or Excel file…",
     "upload_csv": "Upload CSV or Excel file",
     "download_vouchers": "Download vouchers (PDF)",
-    "back": "Back to Dashboard",
     "choose_csv_alert": "Please choose a CSV first.",
     "upload_failed": "Upload failed",
     "voucher_ready_singular": "voucher ready to download",
     "voucher_ready_plural": "vouchers ready to download",
-    "generate_vouchers": "Generate Vouchers",
-    "invalid_qr_title": "Invalid QR Code",
-    "invalid_qr_message": "This QR code cannot be used.",
-    "checking_reason": "Checking reason…",
-    "scan_next": "Scan next beneficiary",
-    "go_home": "Finished scanning? Go to homepage",
-    "reason_used": "This QR code has already been used.",
-    "reason_invalid": "The QR code is invalid or unrecognized.",
-    "reason_no_record": "This QR code does not match any stored beneficiary.",
-    "reason_database": "There was a problem reading offline data. Please try again.",
-    "success_title": "Successfully submitted",
-    "loading_counter": "Payments ready to push to 121: ...",
-    "payments_ready": "Payments ready to push to 121:",
-    "payment_prep": "Prepare to Send Payments",
-    "login_error": "Incorrect username or password.",
-    "admin_dashboard_title": "Admin Dashboard",
-    "admin_dashboard_subtitle": "Manage your 121 Scan configuration and voucher tools.",
-    "config_system_desc": "Edit API keys, endpoints, and system parameters.",
-    "config_display_desc": "Configure which fields and details are shown to FSPs.",
-    "generate_vouchers_desc": "Generate QR vouchers for printing and distribution.",
-    "program_information": "Program Information",
-    "credentials": "Credentials",
-    "url_121": "121 URL",
-    "username_121": "121 Username",
-    "password_121": "121 Password",
-    "field_name_121": "121 Field Name",
-    "matching_field_title": "121 Field for Matching Payments",
-    "matching_field_desc": "This field contains the unique ID from 121 used to match beneficiaries to payments.",
-    "matching_field_placeholder": "e.g. phoneNumber",
-    "wrong_credentials": "Incorrect username or password.",
-    "api_unreachable": "Unable to reach the login server. Please try again.",
-    "login_failed_generic": "Login failed. Please try again.",
-    "go_back": "Go Back",
-    "program_title": "Program Title",
-    "connected_to": "Connected to form:",
-    "form_owner": "Owner",
-    "no_form_connected": "Unable to load form details",
-    "kobo_connection": "Kobo Connection",
-    "payment_amount": "Payment Amount",
-    "voucher_design": "Voucher Design",
-    "voucher_design_desc": "Customise the title, subtitle and logos printed on each program's vouchers.",
-    "voucher_design_title": "Voucher Design",
-    "voucher_design_settings": "Design settings",
-    "voucher_design_settings_desc": "These replace the values printed on the voucher. Each program keeps its own design.",
-    "voucher_title_label": "Title",
-    "voucher_subtitle_label": "Subtitle",
-    "voucher_logos_label": "Logos",
-    "voucher_left_logo": "Left logo",
-    "voucher_right_logo": "Right logo",
-    "voucher_logo_upload": "Upload",
-    "voucher_logo_remove": "remove",
-    "voucher_no_logo": "No logo",
-    "voucher_live_preview": "Live preview",
-    "voucher_preview_desc": "A5 landscape, matching the printed voucher layout.",
-    "voucher_save_design": "Save design",
-    "voucher_design_saved": "Design saved",
-    "voucher_design_save_failed": "Could not save design",
     "voucher_design_incomplete_title": "Voucher design not completed",
     "voucher_design_incomplete_desc": "This program doesn't have a voucher design yet. Set the title, subtitle and logos before generating vouchers.",
     "voucher_design_go": "Design this voucher",
-    "voucher_logo_size": "Size",
-    "voucher_show_qr": "Show QR code",
-    "voucher_show_qr_hint": "Turn off if this program's vouchers don't need a QR code.",
-    "voucher_size_small": "Small",
-    "voucher_size_medium": "Medium",
-    "voucher_size_large": "Large",
     "voucher_fields_title": "Fields on the voucher",
     "voucher_fields_hint": "Drag to reorder. Click a name to change how it is printed. Switch a field off to leave it off the voucher. This is saved for this program.",
     "voucher_fields_none": "No printable columns were found in this file.",
@@ -1030,111 +1036,142 @@ translations = {
     "voucher_fields_column": "Column in your file",
     "voucher_fields_reset": "reset",
     "voucher_fields_reset_title": "Reset to",
-    "program": "Program",
-    "home_title": "Welcome",
-    "current_program": "Program",
-    "people_scanned": "People scanned:",
-    "beneficiaries_ready_to_scan": "Ready to scan:",
-    "last_synced": "Last synced:",
-    "total_amount": "Total amount:",
-    "payments_ready_send": "Payments ready to send",
-    "last_payments_submit": "Last submission:",
-    "cannot_sync_offline": "Cannot sync while offline",
-    "cannot_send_offline": "Cannot send while offline",
-    "loading_photo": "Loading photo…",
-    "decryption_enabled": "Decryption enabled",
-    "select_field_121": "Select field",
-    "select_option": "Select...",
-    "success_subtitle": "You can now scan the next beneficiary.",
-    "counter_loading": "Payments ready to push to 121: ...",
-    "counter_label": "Payments ready to push to 121:",
-    # --- added 2026-07-17: machine-translated, review as needed ---
-    "status_online": "Online",
-    "status_online_sub": "You have internet",
-    "status_offline": "No connection",
-    "status_offline_sub": "Check your signal",
-    "status_offline_mode": "Offline mode",
-    "status_offline_mode_sub": "The app will not use the internet",
-    "work_offline": "Work offline",
-    "go_back_online": "Go back online",
-    "all_collected": "All payments for this beneficiary have already been collected.",
-    "multiple_payments": "This beneficiary has more than one payment on record. Select the one you are distributing.",
-    "select_payment": "Select a payment",
-    "selected": "Selected",
-    "config_subtitle": "Choose which fields appear during a scan and set their labels in each language. Photo capture pulls its options from the program's KoboToolbox form.",
-    "config_program_hint": "Settings below apply to the selected program",
-    "config_select_or_delete": "Please select a field or delete the highlighted row(s) before saving.",
-    "fields_section_title": "Displayed fields",
-    "fields_section_hint": "Pick a field, then adjust its label per language. Labels prefill automatically and can be edited.",
-    "scan_section_hint": "Choose how beneficiaries are identified.",
-    "photo_section_hint": "Maps to an image question in the program's KoboToolbox form. Labels prefill from Kobo.",
-    "enable_photo_field_hint": "When on, staff can attach a photo to the selected Kobo image field.",
-    "kobo_prefill_note": "Labels filled from KoboToolbox — edit any if needed",
-    "no_read_banner": "Can’t read this QR code",
-    "no_read_banner_sub": "Type the Reference ID printed under the QR code into the box below.",
-    "no_read_hint": "This QR code can’t be read — it may be blurred, faded or low quality. Enter the Reference ID printed below the QR code using the box below.",
-    "scan_trouble_hint": "Still trying to read the code — hold steady and move a little closer.",
-    "decoder_unavailable": "The scanner could not start on this device. Enter the Reference ID printed below the QR code using the box below.",
-    "verify_token": "Verify token",
-    "verifying": "Verifying…",
-    "verify_unreachable": "Could not reach the server.",
-    "enter_token_first": "Enter a new token above, then verify.",
-    "token_invalid": "Token not valid for this server.",
-    "token_linked_to": "Token linked to",
-    "kobo_api_token": "API token",
-    "kobo_token_hint": "Found in KoboToolbox under Account settings → Security → API token.",
-    "program_map_hint": "Each 121 program is matched to the KoboToolbox form that collects its data.",
+
+    # ---- voucher_design.html ----
+    "voucher_design_title": "Voucher Design",
+    "voucher_design_settings": "Design settings",
+    "voucher_design_settings_desc": "These replace the values printed on the voucher. Each program keeps its own design.",
+    "voucher_title_label": "Title",
+    "voucher_subtitle_label": "Subtitle",
+    "voucher_logos_label": "Logos",
+    "voucher_left_logo": "Left logo",
+    "voucher_right_logo": "Right logo",
+    "voucher_logo_upload": "Upload",
+    "voucher_logo_remove": "remove",
+    "voucher_no_logo": "No logo",
+    "voucher_logo_size": "Size",
+    "voucher_size_small": "Small",
+    "voucher_size_medium": "Medium",
+    "voucher_size_large": "Large",
+    "voucher_show_qr": "Show QR code",
+    "voucher_show_qr_hint": "Turn off if this program's vouchers don't need a QR code.",
+    "voucher_live_preview": "Live preview",
+    "voucher_preview_desc": "A5 landscape, matching the printed voucher layout.",
+    "voucher_save_design": "Save design",
+    "voucher_design_saved": "Design saved",
+    "voucher_design_save_failed": "Could not save design",
+    "lookup_min": "Type at least {n} characters of the code.",
+    "lookup_many": "{n} possible matches — keep typing.",
+    "lookup_one": "One match found — press Go.",
+    "lookup_none": "No match in the saved records. Check the code.",
+    # ---- lookup field (config.html) ----
+    "lookup_section_title": "Beneficiary lookup",
+    "lookup_section_hint": "Which identifier staff type when the QR code can't be used.",
+    "lookup_field_label": "Look up by",
+    "lookup_field_default": "Reference ID (default)",
+    "lookup_checking": "Checking whether this field is unique in 121…",
+    "lookup_unique_ok": "Unique across all registrations in this program.",
+    "lookup_not_unique": "Not unique: {values} value(s) are shared by {rows} registrations. Staff will not be able to identify those people by this field.",
+    "lookup_has_blanks": "{n} registration(s) have no value for this field and cannot be found by it.",
+    "lookup_check_failed": "Could not check uniqueness against 121 right now.",
+    "lookup_partial_check": "Checked {checked} of {total} registrations — the result may be incomplete.",
+
+    # ---- lookup field (scan.html) ----
+    "manual_code_label_field": "Enter {field}",
+    "lookup_duplicate": "{n} people share this value — use the Reference ID instead.",
+    "verify_only_note": "Verification only — your account cannot record payments."    
 },
+
 "fr": {
-    "title": "Informations sur le bénéficiaire",
-    "name": "Nom",
-    "dob": "Date de naissance",
-    "photo": "Photo",
-    "payment_approved": "Paiement approuvé",
-    "payment_rejected": "Paiement refusé",
-    "participant_withdraws": "Le participant se retire",
-    "language": "Langue",
-    "login": "Connexion administrateur",
-    "enter_password": "Entrer le mot de passe",
-    "submit": "Soumettre",
-    "payment_status": "Statut du paiement",
-    "confirm_person": "Confirmez que c'est la bonne personne",
-    "rejection_reason": "Motif du refus",
-    "already_scanned": "Cette personne a déjà été scannée et soumise à 121.",
-    "success_message": "Paiement soumis avec succès.",
-    "already_submitted_page": "Le paiement de ce bénéficiaire a déjà été soumis. Si vous avez besoin d'aide, contactez support@121.global",
-    "config_title": "Configurer les champs à afficher",
-    "field_key": "Clé de champ (depuis Kobo)",
-    "label_en": "Libellé (EN)",
-    "label_fr": "Libellé (FR)",
-    "label_ar": "Libellé (AR)",
-    "remove": "Supprimer",
-    "add_field": "Ajouter un champ",
+    # ---- Shared chrome (header / footer / buttons on every page) ----
+    "footer_dev": "Développé par 510 @ La Croix-Rouge néerlandaise",
+    "footer_support": "Pour toute assistance, contactez jharrison@redcross.nl",
+    "logout": "Déconnexion",
+    "back_to_dashboard": "Retour",
+    "back_to_programs": "Retour aux programmes",
+    "go_back": "Retour",
     "save": "Enregistrer",
     "saved_successfully": "Enregistré avec succès",
     "failed_to_save": "Échec de l'enregistrement",
-    "logout": "Déconnexion",
-    "config_system": "Configurer le système ",
-    "config_display": "Congifuration des champs de vérification",
+    "remove": "Supprimer",
+    "submit": "Soumettre",
+    "program": "Programme",
+    "program_id": "Sélectionner le programme",
+    "select_option": "Sélectionner...",
+
+    # ---- home.html ----
+    "home_title": "Bienvenue",
+    "home_question": "Qui êtes-vous ?",
+    "home_admin": "Administrateur",
+    "home_fsp": "Personnel de distribution",
+
+    # ---- admin_login.html / fsp_login.html (errors raised in app.py) ----
+    "login": "Connexion administrateur",
     "fsp_login": "Connexion personnel de distribution",
+    "enter_password": "Entrer le mot de passe",
+    "login_error": "Nom d’utilisateur ou mot de passe incorrect.",
+    "wrong_credentials": "Nom d’utilisateur ou mot de passe incorrect.",
+    "api_unreachable": "Impossible de joindre le serveur. Veuillez réessayer.",
+
+    # ---- fsp_programs.html ----
     "program_select_title": "Sélectionner un programme",
-    "back_to_programs": "Retour aux programmes",
     "program_select_subtitle": "Choisissez le programme avec lequel vous souhaitez travailler",
-    "fsp_sync_title": "Synchroniser les enregistrements hors ligne",
-    "sync_latest": "Synchroniser les derniers enregistrements",
-    "syncing": "Synchronisation...",
-    "sync_error": "❌ Échec de la synchronisation. Veuillez réessayer.",
-    "sync_initial": "Cliquez sur synchroniser pour voir combien de bénéficiaires sont prêts pour la validation hors ligne.",
-    "sync_complete": "✅ {count} bénéficiaires prêts pour la validation hors ligne.",
-    "step1": "Étape 1. Synchroniser les derniers enregistrements",
-    "step2": "Étape 2. Importer le cache hors ligne",
-    "step3": "Étape 3. Scanner les codes QR",
-    "online": "En ligne",
-    "offline": "Hors ligne",
+
+    # ---- admin_dashboard.html ----
+    "admin_dashboard_title": "Tableau de bord Admin",
+    "admin_dashboard_subtitle": "Gérez la configuration de 121 Scan et les outils de bons.",
+    "config_system": "Configuration du système",
+    "config_system_desc": "Modifier les clés API, les points d'accès et les paramètres du système.",
+    "config_display": "Configurer les champs à afficher",
+    "config_display_desc": "Configurer les champs et informations affichés aux FSP.",
+    "generate_vouchers": "Générer les bons",
+    "generate_vouchers_desc": "Générer des bons QR pour impression et distribution.",
+    "voucher_design": "Conception du bon",
+    "voucher_design_desc": "Personnalisez le titre, le sous-titre et les logos imprimés sur les bons de chaque programme.",
+
+    # ---- system_config.html ----
+    "kobo_api_token": "Jeton API",
+    "kobo_token_hint": "Se trouve dans KoboToolbox sous Paramètres du compte → Sécurité → Jeton API.",
+    "verify_token": "Vérifier le jeton",
+    "verifying": "Vérification…",
+    "verify_unreachable": "Impossible de joindre le serveur.",
+    "enter_token_first": "Saisissez un nouveau jeton ci-dessus, puis vérifiez.",
+    "token_invalid": "Jeton non valide pour ce serveur.",
+    "token_linked_to": "Jeton lié à",
+    "program_map_hint": "Chaque programme 121 est associé au formulaire KoboToolbox qui collecte ses données.",
+
+    # ---- config.html (field display configuration) ----
+    "config_title": "Configurer les champs à afficher",
+    "config_subtitle": "Choisissez les champs qui apparaissent lors d'un scan et définissez leurs libellés dans chaque langue. La capture de photo tire ses options du formulaire KoboToolbox du programme.",
+    "config_program_hint": "Les paramètres ci-dessous s'appliquent au programme sélectionné",
+    "config_select_or_delete": "Veuillez sélectionner un champ ou supprimer la ou les lignes en surbrillance avant d'enregistrer.",
+    "fields_section_title": "Champs affichés",
+    "fields_section_hint": "Choisissez un champ, puis ajustez son libellé par langue. Les libellés se remplissent automatiquement et peuvent être modifiés.",
+    "field_key": "Champ photo Kobo",
+    "field_name_121": "Nom du champ 121",
+    "label_en": "Libellé (EN)",
+    "label_fr": "Libellé (FR)",
+    "label_ar": "Libellé (AR)",
+    "add_field": "Ajouter un champ",
+    "select_field_121": "Sélectionner un champ",
+    "editable": "Modifiable",
+    "editable_hint": "Activez pour permettre au personnel de distribution de modifier ce champ pendant un scan. Les modifications sont renvoyées à 121 avec le paiement.",
+    "editable_on": "Activé",
+    "editable_off": "Désactivé",
+    "scan_config_title": "Méthode de scan",
+    "scan_section_hint": "Choisissez comment les bénéficiaires sont identifiés.",
+    "enable_qr_scan": "Activer le scan de code QR",
+    "enable_qr_scan_hint": "Désactivé, ce programme utilise uniquement la saisie manuelle du code (pas de caméra QR).",
+    "photo_config_title": "Configuration du champ photo",
+    "photo_section_hint": "Correspond à une question image dans le formulaire KoboToolbox du programme. Les libellés se remplissent depuis Kobo.",
+    "enable_photo_field": "Activer l'affichage du champ photo",
+    "enable_photo_field_hint": "Lorsqu'activé, le personnel peut joindre une photo au champ image Kobo sélectionné.",
+    "kobo_prefill_note": "Libellés remplis depuis KoboToolbox — modifiez-les si nécessaire",
+
+    # ---- scan.html ----
     "scan_title": "Scanner un QR",
-    "code_entry_title": "Saisir le code",
-    "back_to_dashboard": "Retour au tableau de bord",
     "scan_hint": "Pointez la caméra vers le code QR.",
+    "code_entry_title": "Saisir le code",
     "code_entry_hint": "Saisissez ci-dessous le code unique du bénéficiaire.",
     "no_qr_btn": "Impossible de scanner le QR ?",
     "manual_code_label": "Saisir le code manuellement",
@@ -1146,134 +1183,76 @@ translations = {
     "camera_denied": "Accès à la caméra refusé ou non disponible.",
     "scanning": "Analyse…",
     "starting_camera": "Démarrage de la caméra…",
-    "footer_dev": "Développé par 510 @ La Croix-Rouge néerlandaise",
-    "footer_support": "Pour toute assistance, contactez jharrison@redcross.nl",
-    "kobo_info": "Informations Kobo",
-    "kobo_token": "Clé API",
-    "asset_id": "ID d'actif Kobo",
-    "fsp_password": "Définir un mot de passe pour les FSP",
-    "password": "Mot de passe",
-    "encryption_settings": "Paramètres de chiffrement",
-    "encryption_key": "Clé de chiffrement",
-    "encryption_warning": "Utilisée pour déchiffrer les champs. Si elle est incorrecte, la validation hors ligne ne fonctionnera pas.",
-    "encryption_toggle_warning": "Je comprends que changer cela pourrait casser le système si incorrect.",
-    "info_121": "Informations 121",
-    "url121": "URL 121",
-    "username121": "Nom d'utilisateur 121",
-    "program_id": "Sélectionner le programme",
-    "payment_id": "ID de paiement",
-    "column_to_match": "Champ à faire correspondre pour le paiement (ex. : phoneNumber)",
-    "column_to_match_info": "Ce champ est sélectionné dans la page de configuration d'affichage.",
-    "use_for_matching": "Utiliser pour le rapprochement des paiements",
-    "photo_config_title": "Configuration du champ photo",
-    "enable_photo_field": "Activer l'affichage du champ photo",
-    "scan_config_title": "Méthode de scan",
-    "enable_qr_scan": "Activer le scan de code QR",
-    "enable_qr_scan_hint": "Désactivé, ce programme utilise uniquement la saisie manuelle du code (pas de caméra QR).",
-    "home_question": "Qui es-tu?",
-    "home_admin": "Administrateur",
-    "home_fsp": "Personnel de distribution",
-    "step_4_generate": "📤 Étape 4. Générer les paiements à envoyer à 121",
-    "payments_ready": "🔄 Paiements prêts à être soumis à 121 :",
-    "generate_csv": "Étape 4. Générer un CSV",
-    "download_csv": "⬇️ Télécharger le CSV",
-    "step_5_send": "✅ Étape 5. Envoyer les paiements à 121",
-    "send_payments": "Étape 5. Envoyer les paiements à 121",
+    "scan_trouble_hint": "Lecture du code en cours — restez stable et rapprochez-vous un peu.",
+    "decoder_unavailable": "Le scanner n'a pas pu démarrer sur cet appareil. Saisissez l'identifiant de référence imprimé sous le code QR dans le champ ci-dessous.",
+    "no_read_banner": "Impossible de lire ce code QR",
+    "no_read_banner_sub": "Saisissez l'identifiant de référence imprimé sous le code QR dans le champ ci-dessous.",
+    "no_read_hint": "Ce code QR ne peut pas être lu — il est peut-être flou, effacé ou de mauvaise qualité. Saisissez l'identifiant de référence imprimé sous le code QR dans le champ ci-dessous.",
+
+    # ---- fsp_admin.html (connection state, counters, send) ----
+    "current_program": "Programme",
+    "status_online": "En ligne",
+    "status_online_sub": "Vous avez Internet",
+    "status_offline": "Pas de connexion",
+    "status_offline_sub": "Vérifiez votre signal",
+    "status_offline_mode": "Mode hors ligne",
+    "status_offline_mode_sub": "L'application n'utilisera pas Internet",
+    "work_offline": "Travailler hors ligne",
+    "go_back_online": "Revenir en ligne",
+    "beneficiaries_ready_to_scan": "Prêts à scanner :",
+    "last_synced": "Dernière synchronisation :",
+    "cannot_sync_offline": "Impossible de synchroniser hors ligne",
+    "people_scanned": "Personnes scannées :",
+    "total_amount": "Montant total :",
+    "payments_ready_send": "Paiements prêts à envoyer",
+    "last_payments_submit": "Dernier envoi :",
+    "cannot_send_offline": "Impossible d'envoyer hors ligne",
     "payment_submit_success": "✅ Paiements envoyés avec succès !",
     "payment_submit_failed": "❌ Échec de l'envoi",
-    "voucher_generator": "Générateur de bons",
-    "csv_hint": "Téléchargez un fichier CSV ou Excel avec referenceId et d’autres champs à imprimer",
-    "choose_csv": "Télécharger un fichier CSV ou Excel",
-    "upload_csv": "Importer le fichier",
-    "download_vouchers": "Télécharger les bons (PDF)",
-    "back": "Retour au tableau de bord",
-    "choose_csv_alert": "Veuillez d'abord choisir un fichier CSV.",
-    "upload_failed": "Échec du téléversement",
-    "voucher_ready_singular": "bon prêt à télécharger",
-    "voucher_ready_plural": "bons prêts à télécharger",
-    "generate_vouchers": "Générer les coupons",
+    "no_payments": "Aucun paiement prêt à envoyer.",
+
+    # ---- beneficiary_offline.html ----
+    "title": "Informations sur le bénéficiaire",
+    "decryption_enabled": "Déchiffrement activé",
+    "loading_photo": "Chargement de la photo…",
+    "payment_amount": "Montant du paiement",
+    "multiple_payments": "Ce bénéficiaire a plus d'un paiement enregistré. Sélectionnez celui que vous distribuez.",
+    "select_payment": "Sélectionnez un paiement",
+    "selected": "Sélectionné",
+    "all_collected": "Tous les paiements pour ce bénéficiaire ont déjà été retirés.",
+    "payment_approved": "Approuver",
+    "payment_rejected": "Passer",
+    "enter_value": "Saisir une valeur",
+
+    # ---- success_offline.html ----
+    "success_title": "Soumis avec succès",
+    "success_message": "Vous pouvez maintenant scanner le bénéficiaire suivant.",
+    "payments_ready": "Paiements prêts à envoyer à 121 :",
+    "scan_next": "Scanner le bénéficiaire suivant",
+    "go_home": "Terminé le scan ? Aller à la page d’accueil",
+
+    # ---- invalid-qr.html ----
     "invalid_qr_title": "Code QR invalide",
     "invalid_qr_message": "Ce code QR ne peut pas être utilisé.",
     "checking_reason": "Vérification de la raison…",
-    "scan_next": "Scanner le bénéficiaire suivant",
-    "go_home": "Terminé le scan ? Aller à la page d’accueil",
     "reason_used": "Ce code QR a déjà été utilisé.",
     "reason_invalid": "Le code QR est invalide ou non reconnu.",
     "reason_no_record": "Aucun bénéficiaire correspondant n’a été trouvé.",
     "reason_database": "Problème de lecture des données hors ligne. Veuillez réessayer.",
-    "success_title": "Soumis avec succès",
-    "success_subtitle": "Vous pouvez maintenant scanner le bénéficiaire suivant.",
-    "counter_loading": "Paiements prêts à envoyer à 121 : ...",
-    "counter_label": "Paiements prêts à envoyer à 121 :",
-    "payment_prep": "Préparer l'envoi des paiements",
-    "login_error": "Nom d’utilisateur ou mot de passe incorrect.",
-    "admin_dashboard_title": "Tableau de bord Admin",
-    "admin_dashboard_subtitle": "Gérez la configuration de 121 Scan et les outils de bons.",
-    "config_system_desc": "Modifier les clés API, les points d'accès et les paramètres du système.",
-    "config_display_desc": "Configurer les champs et informations affichés aux FSP.",
-    "generate_vouchers_desc": "Générer des bons QR pour impression et distribution.",
-    "program_information": "Informations du programme",
-    "credentials": "Identifiants",
-    "url_121": "URL 121",
-    "username_121": "Nom d’utilisateur 121",
-    "password_121": "Mot de passe 121",
-    "field_name_121": "Nom du champ 121",
-    "matching_field_title": "Champ 121 pour l’appariement des paiements",
-    "matching_field_desc": "Ce champ contient l’identifiant unique de 121 utilisé pour faire correspondre les bénéficiaires aux paiements.",
-    "matching_field_placeholder": "ex. phoneNumber",
-    "wrong_credentials": "Nom d’utilisateur ou mot de passe incorrect.",
-    "api_unreachable": "Impossible de joindre le serveur. Veuillez réessayer.",
-    "login_failed_generic": "Échec de connexion. Veuillez réessayer.",
-    "go_back": "Retour",
-    "program_title": "Titre du programme",
-    "connected_to": "Connecté au formulaire :",
-    "form_owner": "Propriétaire",
-    "no_form_connected": "Impossible de charger les détails du formulaire",
-    "kobo_connection": "Connexion Kobo",
-    "payment_amount": "Montant du paiement",
-    "program": "Programme",
-    "loading_counter": "Paiements prêts à envoyer à 121 : ...",
-    "home_title": "Bienvenue",
-    "current_program": "Programme",
-    "people_scanned": "Personnes scannées :",
-    "beneficiaries_ready_to_scan": "Prêts à scanner :",
-    "last_synced": "Dernière synchronisation :",
-    "total_amount": "Montant total :",
-    "payments_ready_send": "Paiements prêts à envoyer ",
-    "last_payments_submit": "Dernier envoi :",
-    "cannot_sync_offline": "Impossible de synchroniser hors ligne",
-    "cannot_send_offline": "Impossible d'envoyer hors ligne",
-    "loading_photo": "Chargement de la photo…",
-    "decryption_enabled": "Déchiffrement activé",
-    "select_field_121": "Sélectionner un champ",
-    "select_option": "Sélectionner...",
-    "voucher_design": "Conception du bon",
-    "voucher_design_title": "Conception du bon",
-    "voucher_design_desc": "Personnalisez le titre, le sous-titre et les logos imprimés sur les bons de chaque programme.",
-    "voucher_design_settings": "Paramètres de conception",
-    "voucher_design_settings_desc": "Ceux-ci remplacent les valeurs imprimées sur le bon. Chaque programme conserve sa propre conception.",
-    "voucher_title_label": "Titre",
-    "voucher_subtitle_label": "Sous-titre",
-    "voucher_logos_label": "Logos",
-    "voucher_left_logo": "Logo de gauche",
-    "voucher_right_logo": "Logo de droite",
-    "voucher_logo_upload": "Téléverser",
-    "voucher_logo_remove": "supprimer",
-    "voucher_no_logo": "Aucun logo",
-    "voucher_live_preview": "Aperçu en direct",
-    "voucher_preview_desc": "A5 paysage, correspondant à la mise en page du bon imprimé.",
-    "voucher_save_design": "Enregistrer la conception",
-    "voucher_design_saved": "Conception enregistrée",
-    "voucher_design_save_failed": "Impossible d'enregistrer la conception",
+
+    # ---- vouchers.html (upload + field order) ----
+    "voucher_generator": "Générateur de bons",
+    "csv_hint": "Téléchargez un fichier CSV ou Excel avec referenceId et d’autres champs à imprimer",
+    "choose_csv": "Choisir un fichier CSV ou Excel…",
+    "upload_csv": "Importer le fichier CSV ou Excel",
+    "download_vouchers": "Télécharger les bons (PDF)",
+    "choose_csv_alert": "Veuillez d'abord choisir un fichier CSV.",
+    "upload_failed": "Échec du téléversement",
+    "voucher_ready_singular": "bon prêt à télécharger",
+    "voucher_ready_plural": "bons prêts à télécharger",
     "voucher_design_incomplete_title": "Conception du bon non terminée",
     "voucher_design_incomplete_desc": "Ce programme n'a pas encore de conception de bon. Définissez le titre, le sous-titre et les logos avant de générer les bons.",
     "voucher_design_go": "Concevoir ce bon",
-    "voucher_logo_size": "Taille",
-    "voucher_show_qr": "Afficher le code QR",
-    "voucher_show_qr_hint": "Désactivez si les bons de ce programme n'ont pas besoin d'un code QR.",
-    "voucher_size_small": "Petit",
-    "voucher_size_medium": "Moyen",
-    "voucher_size_large": "Grand",
     "voucher_fields_title": "Champs sur le bon",
     "voucher_fields_hint": "Faites glisser pour réordonner. Cliquez sur un nom pour modifier son affichage. Désactivez un champ pour l'exclure du bon. Enregistré pour ce programme.",
     "voucher_fields_none": "Aucune colonne imprimable n'a été trouvée dans ce fichier.",
@@ -1286,93 +1265,127 @@ translations = {
     "voucher_fields_column": "Colonne de votre fichier",
     "voucher_fields_reset": "réinitialiser",
     "voucher_fields_reset_title": "Réinitialiser à",
-    # --- added 2026-07-17: machine-translated, review as needed ---
-    "status_online": "En ligne",
-    "status_online_sub": "Vous avez Internet",
-    "status_offline": "Pas de connexion",
-    "status_offline_sub": "Vérifiez votre signal",
-    "status_offline_mode": "Mode hors ligne",
-    "status_offline_mode_sub": "L'application n'utilisera pas Internet",
-    "work_offline": "Travailler hors ligne",
-    "go_back_online": "Revenir en ligne",
-    "all_collected": "Tous les paiements pour ce bénéficiaire ont déjà été retirés.",
-    "multiple_payments": "Ce bénéficiaire a plus d'un paiement enregistré. Sélectionnez celui que vous distribuez.",
-    "select_payment": "Sélectionnez un paiement",
-    "selected": "Sélectionné",
-    "config_subtitle": "Choisissez les champs qui apparaissent lors d'un scan et définissez leurs libellés dans chaque langue. La capture de photo tire ses options du formulaire KoboToolbox du programme.",
-    "config_program_hint": "Les paramètres ci-dessous s'appliquent au programme sélectionné",
-    "config_select_or_delete": "Veuillez sélectionner un champ ou supprimer la ou les lignes en surbrillance avant d'enregistrer.",
-    "fields_section_title": "Champs affichés",
-    "fields_section_hint": "Choisissez un champ, puis ajustez son libellé par langue. Les libellés se remplissent automatiquement et peuvent être modifiés.",
-    "scan_section_hint": "Choisissez comment les bénéficiaires sont identifiés.",
-    "photo_section_hint": "Correspond à une question image dans le formulaire KoboToolbox du programme. Les libellés se remplissent depuis Kobo.",
-    "enable_photo_field_hint": "Lorsqu'activé, le personnel peut joindre une photo au champ image Kobo sélectionné.",
-    "kobo_prefill_note": "Libellés remplis depuis KoboToolbox — modifiez-les si nécessaire",
-    "no_read_banner": "Impossible de lire ce code QR",
-    "no_read_banner_sub": "Saisissez l'identifiant de référence imprimé sous le code QR dans le champ ci-dessous.",
-    "no_read_hint": "Ce code QR ne peut pas être lu — il est peut-être flou, effacé ou de mauvaise qualité. Saisissez l'identifiant de référence imprimé sous le code QR dans le champ ci-dessous.",
-    "scan_trouble_hint": "Lecture du code en cours — restez stable et rapprochez-vous un peu.",
-    "decoder_unavailable": "Le scanner n'a pas pu démarrer sur cet appareil. Saisissez l'identifiant de référence imprimé sous le code QR dans le champ ci-dessous.",
-    "verify_token": "Vérifier le jeton",
-    "verifying": "Vérification…",
-    "verify_unreachable": "Impossible de joindre le serveur.",
-    "enter_token_first": "Saisissez un nouveau jeton ci-dessus, puis vérifiez.",
-    "token_invalid": "Jeton non valide pour ce serveur.",
-    "token_linked_to": "Jeton lié à",
-    "kobo_api_token": "Jeton API",
-    "kobo_token_hint": "Se trouve dans KoboToolbox sous Paramètres du compte → Sécurité → Jeton API.",
-    "program_map_hint": "Chaque programme 121 est associé au formulaire KoboToolbox qui collecte ses données.",
+
+    # ---- voucher_design.html ----
+    "voucher_design_title": "Conception du bon",
+    "voucher_design_settings": "Paramètres de conception",
+    "voucher_design_settings_desc": "Ceux-ci remplacent les valeurs imprimées sur le bon. Chaque programme conserve sa propre conception.",
+    "voucher_title_label": "Titre",
+    "voucher_subtitle_label": "Sous-titre",
+    "voucher_logos_label": "Logos",
+    "voucher_left_logo": "Logo de gauche",
+    "voucher_right_logo": "Logo de droite",
+    "voucher_logo_upload": "Téléverser",
+    "voucher_logo_remove": "supprimer",
+    "voucher_no_logo": "Aucun logo",
+    "voucher_logo_size": "Taille",
+    "voucher_size_small": "Petit",
+    "voucher_size_medium": "Moyen",
+    "voucher_size_large": "Grand",
+    "voucher_show_qr": "Afficher le code QR",
+    "voucher_show_qr_hint": "Désactivez si les bons de ce programme n'ont pas besoin d'un code QR.",
+    "voucher_live_preview": "Aperçu en direct",
+    "voucher_preview_desc": "A5 paysage, correspondant à la mise en page du bon imprimé.",
+    "voucher_save_design": "Enregistrer la conception",
+    "voucher_design_saved": "Conception enregistrée",
+    "voucher_design_save_failed": "Impossible d'enregistrer la conception",
+    "lookup_min": "Saisissez au moins {n} caractères du code.",
+    "lookup_many": "{n} correspondances possibles — continuez à saisir.",
+    "lookup_one": "Une correspondance trouvée — appuyez sur Valider.",
+    "lookup_none": "Aucune correspondance dans les enregistrements. Vérifiez le code.",
+    "verify_only_note": "Vérification uniquement — votre compte ne peut pas enregistrer de paiements."
 },
+
 "ar": {
-    "title": "معلومات المستفيد",
-    "name": "الاسم",
-    "dob": "تاريخ الميلاد",
-    "photo": "صورة",
-    "payment_approved": "تمت الموافقة على الدفع",
-    "payment_rejected": "تم رفض الدفع",
-    "participant_withdraws": "انسحب المستفيد",
-    "language": "اللغة",
-    "login": "تسجيل دخول المسؤول",
-    "enter_password": "أدخل كلمة المرور",
-    "submit": "إرسال",
-    "payment_status": "حالة الدفع",
-    "confirm_person": "تأكيد أن هذه هي الشخص الصحيح",
-    "rejection_reason": "سبب الرفض",
-    "already_scanned": "تم بالفعل مسح هذا الشخص وإرساله إلى 121.",
-    "success_message": "تم إرسال الدفع بنجاح.",
-    "already_submitted_page": "تم بالفعل إرسال دفعة هذا المستفيد. إذا كنت بحاجة إلى الدعم، فاتصل بـ support@121.global",
-    "config_title": "تكوين الحقول المعروضة",
-    "field_key": "مفتاح الحقل (من كوبا)",
-    "label_en": "التسمية (EN)",
-    "label_fr": "التسمية (FR)",
-    "label_ar": "التسمية (AR)",
-    "remove": "إزالة",
-    "add_field": "إضافة حقل",
+    # ---- Shared chrome (header / footer / buttons on every page) ----
+    "footer_dev": "تم التطوير بواسطة 510 @ الصليب الأحمر الهولندي",
+    "footer_support": "إذا كنت بحاجة إلى الدعم، تواصل مع jharrison@redcross.nl",
+    "logout": "تسجيل الخروج",
+    "back_to_dashboard": "عودة",
+    "back_to_programs": "العودة إلى البرامج",
+    "go_back": "عودة",
     "save": "حفظ",
     "saved_successfully": "تم الحفظ بنجاح",
     "failed_to_save": "فشل الحفظ",
-    "logout": "تسجيل الخروج",
-    "config_system": "إعدادات النظام",
-    "config_display": "تكوين الحقول المعروضة",
+    "remove": "إزالة",
+    "submit": "إرسال",
+    "program": "البرنامج",
+    "program_id": "اختر البرنامج",
+    "select_option": "اختر...",
+
+    # ---- home.html ----
+    "home_title": "مرحبًا",
+    "home_question": "من أنت؟",
+    "home_admin": "المسؤول",
+    "home_fsp": "موظفو التوزيع",
+
+    # ---- admin_login.html / fsp_login.html (errors raised in app.py) ----
+    "login": "تسجيل دخول المسؤول",
     "fsp_login": "تسجيل دخول موظفي التوزيع",
+    "enter_password": "أدخل كلمة المرور",
+    "login_error": "اسم المستخدم أو كلمة المرور غير صحيحة.",
+    "wrong_credentials": "اسم المستخدم أو كلمة المرور غير صحيحة.",
+    "api_unreachable": "تعذّر الاتصال بالخادم. يرجى المحاولة مرة أخرى.",
+
+    # ---- fsp_programs.html ----
     "program_select_title": "اختر برنامجاً",
-    "back_to_programs": "العودة إلى البرامج",
     "program_select_subtitle": "اختر البرنامج الذي تريد العمل معه",
-    "fsp_sync_title": "📥 مزوّد الخدمة: مزامنة السجلات غير المتصلة",
-    "sync_latest": "مزامنة أحدث السجلات",
-    "syncing": "جارٍ المزامنة...",
-    "sync_error": "❌ فشلت عملية المزامنة. يرجى المحاولة مرة أخرى.",
-    "sync_initial": "انقر على المزامنة لمعرفة عدد المستفيدين الجاهزين للتحقق دون اتصال.",
-    "sync_complete": "✅ {count} مستفيدين جاهزين للتحقق دون اتصال.",
-    "step1": "الخطوة 1. مزامنة أحدث السجلات",
-    "step2": "الخطوة 2. استيراد ذاكرة التخزين المؤقت دون اتصال",
-    "step3": "الخطوة 3. مسح رموز QR",
-    "online": "متصل",
-    "offline": "غير متصل",
+
+    # ---- admin_dashboard.html ----
+    "admin_dashboard_title": "لوحة تحكم المسؤول",
+    "admin_dashboard_subtitle": "إدارة إعدادات 121 Scan وأدوات القسائم",
+    "config_system": "إعدادات النظام",
+    "config_system_desc": "تعديل مفاتيح API ونقاط النهاية ومعلمات النظام.",
+    "config_display": "تكوين الحقول المعروضة",
+    "config_display_desc": "تكوين الحقول والمعلومات التي يتم عرضها لمقدمي الخدمات المالية.",
+    "generate_vouchers": "إصدار القسائم",
+    "generate_vouchers_desc": "إنشاء قسائم QR للطباعة والتوزيع.",
+    "voucher_design": "تصميم القسيمة",
+    "voucher_design_desc": "خصّص العنوان والعنوان الفرعي والشعارات المطبوعة على قسائم كل برنامج.",
+
+    # ---- system_config.html ----
+    "kobo_api_token": "رمز API",
+    "kobo_token_hint": "يوجد في KoboToolbox ضمن إعدادات الحساب ← الأمان ← رمز API.",
+    "verify_token": "التحقق من الرمز",
+    "verifying": "جارٍ التحقق…",
+    "verify_unreachable": "تعذّر الوصول إلى الخادم.",
+    "enter_token_first": "أدخل رمزًا جديدًا أعلاه، ثم تحقق.",
+    "token_invalid": "الرمز غير صالح لهذا الخادم.",
+    "token_linked_to": "الرمز مرتبط بـ",
+    "program_map_hint": "يرتبط كل برنامج 121 بنموذج KoboToolbox الذي يجمع بياناته.",
+
+    # ---- config.html (field display configuration) ----
+    "config_title": "تكوين الحقول المعروضة",
+    "config_subtitle": "اختر الحقول التي تظهر أثناء المسح وحدد تسمياتها بكل لغة. يسحب التقاط الصور خياراته من نموذج KoboToolbox الخاص بالبرنامج.",
+    "config_program_hint": "تنطبق الإعدادات أدناه على البرنامج المحدد",
+    "config_select_or_delete": "يرجى تحديد حقل أو حذف الصفوف المميزة قبل الحفظ.",
+    "fields_section_title": "الحقول المعروضة",
+    "fields_section_hint": "اختر حقلاً، ثم اضبط تسميته لكل لغة. تُملأ التسميات تلقائيًا ويمكن تعديلها.",
+    "field_key": "حقل الصورة في كوبا",
+    "field_name_121": "اسم الحقل في 121",
+    "label_en": "التسمية (EN)",
+    "label_fr": "التسمية (FR)",
+    "label_ar": "التسمية (AR)",
+    "add_field": "إضافة حقل",
+    "select_field_121": "اختر حقلاً",
+    "editable": "قابل للتعديل",
+    "editable_hint": "فعّل للسماح لموظفي التوزيع بتعديل هذا الحقل أثناء المسح. تُرسل التعديلات إلى 121 مع الدفعة.",
+    "editable_on": "مُفعّل",
+    "editable_off": "مُعطّل",
+    "scan_config_title": "طريقة المسح",
+    "scan_section_hint": "اختر كيفية تحديد هوية المستفيدين.",
+    "enable_qr_scan": "تفعيل مسح رمز QR",
+    "enable_qr_scan_hint": "عند الإيقاف، يستخدم هذا البرنامج إدخال الرمز يدويًا فقط (بدون كاميرا QR).",
+    "photo_config_title": "إعدادات حقل الصورة",
+    "photo_section_hint": "يرتبط بسؤال صورة في نموذج KoboToolbox الخاص بالبرنامج. تُملأ التسميات من Kobo.",
+    "enable_photo_field": "تفعيل عرض حقل الصورة",
+    "enable_photo_field_hint": "عند التفعيل، يمكن للموظفين إرفاق صورة بحقل الصورة المحدد في Kobo.",
+    "kobo_prefill_note": "تم ملء التسميات من KoboToolbox — عدّلها إذا لزم الأمر",
+
+    # ---- scan.html ----
     "scan_title": "مسح رمز QR",
-    "code_entry_title": "إدخال الرمز",
-    "back_to_dashboard": "العودة إلى لوحة التحكم",
     "scan_hint": "وجّه الكاميرا نحو رمز QR.",
+    "code_entry_title": "إدخال الرمز",
     "code_entry_hint": "أدخل الرمز الفريد للمستفيد أدناه.",
     "no_qr_btn": "تعذّر مسح رمز QR؟",
     "manual_code_label": "أدخل الرمز يدويًا",
@@ -1384,134 +1397,76 @@ translations = {
     "camera_denied": "تم رفض إذن الكاميرا أو أنها غير متاحة.",
     "scanning": "جارٍ المسح…",
     "starting_camera": "جارٍ بدء تشغيل الكاميرا…",
-    "footer_dev": "تم التطوير بواسطة 510 @ الصليب الأحمر الهولندي",
-    "footer_support": "إذا كنت بحاجة إلى الدعم، تواصل مع jharrison@redcross.nl",
-    "kobo_info": "معلومات كوبا",
-    "kobo_token": "رمز كوبا",
-    "asset_id": "معرف الأصول في كوبا",
-    "fsp_password": "تعيين كلمة مرور لـ FSP",
-    "password": "كلمة المرور",
-    "encryption_settings": "إعدادات التشفير",
-    "encryption_key": "مفتاح التشفير",
-    "encryption_warning": "يُستخدم لفك تشفير الحقول المشفرة. إذا كان غير صحيح، فلن تعمل التحقق بدون اتصال.",
-    "encryption_toggle_warning": "أفهم أن التغيير هنا قد يؤدي إلى تعطل النظام إذا كان غير صحيح.",
-    "info_121": "معلومات 121",
-    "url121": "رابط 121",
-    "username121": "اسم مستخدم 121",
-    "payment_id": "معرف الدفع",
-    "column_to_match": "الحقل المطابق للدفع (مثل رقم الهاتف)",
-    "column_to_match_info": "يتم تحديد هذا الحقل في صفحة إعداد عرض الحقول.",
-    "use_for_matching": "استخدم لمطابقة المدفوعات",
-    "photo_config_title": "إعدادات حقل الصورة",
-    "enable_photo_field": "تفعيل عرض حقل الصورة",
-    "scan_config_title": "طريقة المسح",
-    "enable_qr_scan": "تفعيل مسح رمز QR",
-    "enable_qr_scan_hint": "عند الإيقاف، يستخدم هذا البرنامج إدخال الرمز يدويًا فقط (بدون كاميرا QR).",
-    "home_question": "من أنت؟",
-    "home_admin": "المسؤول",
-    "home_fsp": "موظفو التوزيع",
-    "step_4_generate": "📤 الخطوة 4. إنشاء الدفعات لإرسالها إلى 121",
-    "payments_ready": "🔄 الدفعات الجاهزة للإرسال إلى 121:",
-    "generate_csv": "إنشاء ملف CSV",
-    "download_csv": "⬇️ تحميل ملف CSV",
-    "step_5_send": "✅ الخطوة 5. إرسال الدفعات إلى 121",
-    "send_payments": "إرسال الدفعات",
+    "scan_trouble_hint": "لا تزال قراءة الرمز جارية — ثبّت الجهاز واقترب قليلاً.",
+    "decoder_unavailable": "تعذّر تشغيل الماسح الضوئي على هذا الجهاز. أدخل المعرّف المرجعي المطبوع أسفل رمز QR في المربع أدناه.",
+    "no_read_banner": "تعذّرت قراءة رمز QR هذا",
+    "no_read_banner_sub": "اكتب المعرّف المرجعي المطبوع أسفل رمز QR في المربع أدناه.",
+    "no_read_hint": "تعذّرت قراءة رمز QR هذا — قد يكون ضبابيًا أو باهتًا أو منخفض الجودة. أدخل المعرّف المرجعي المطبوع أسفل الرمز في المربع أدناه.",
+
+    # ---- fsp_admin.html (connection state, counters, send) ----
+    "current_program": "البرنامج",
+    "status_online": "متصل",
+    "status_online_sub": "لديك اتصال بالإنترنت",
+    "status_offline": "لا يوجد اتصال",
+    "status_offline_sub": "تحقق من الإشارة",
+    "status_offline_mode": "وضع عدم الاتصال",
+    "status_offline_mode_sub": "لن يستخدم التطبيق الإنترنت",
+    "work_offline": "العمل دون اتصال",
+    "go_back_online": "العودة إلى الاتصال",
+    "beneficiaries_ready_to_scan": "جاهزون للمسح:",
+    "last_synced": "آخر مزامنة:",
+    "cannot_sync_offline": "لا يمكن المزامنة دون اتصال",
+    "people_scanned": "الأشخاص الذين تم مسحهم:",
+    "total_amount": "المبلغ الإجمالي:",
+    "payments_ready_send": "المدفوعات الجاهزة للإرسال",
+    "last_payments_submit": "آخر إرسال:",
+    "cannot_send_offline": "لا يمكن الإرسال دون اتصال",
     "payment_submit_success": "✅ تم إرسال المدفوعات بنجاح!",
     "payment_submit_failed": "❌ فشل الإرسال",
-    "voucher_generator": "مولّد القسائم",
-    "csv_hint": "قم بتحميل ملف CSV يحتوي على referenceId وأي حقول إضافية للطباعة",
-    "choose_csv": "اختر ملف CSV/Excel…",
-    "upload_csv": "تحميل ملف Excel/CSV",
-    "download_vouchers": "تنزيل القسائم (PDF)",
-    "back": "العودة إلى لوحة التحكم",
-    "choose_csv_alert": "يرجى اختيار ملف CSV أولاً.",
-    "upload_failed": "فشل الرفع",
-    "voucher_ready_singular": "قسيمة جاهزة للتنزيل",
-    "voucher_ready_plural": "قسائم جاهزة للتنزيل",
-    "generate_vouchers": "إصدار القسائم",
+    "no_payments": "لا توجد مدفوعات جاهزة للإرسال.",
+
+    # ---- beneficiary_offline.html ----
+    "title": "معلومات المستفيد",
+    "decryption_enabled": "فك التشفير مُفعّل",
+    "loading_photo": "جارٍ تحميل الصورة…",
+    "payment_amount": "مبلغ الدفع",
+    "multiple_payments": "لدى هذا المستفيد أكثر من دفعة مسجّلة. اختر الدفعة التي توزّعها.",
+    "select_payment": "اختر دفعة",
+    "selected": "محدد",
+    "all_collected": "تم بالفعل استلام جميع المدفوعات لهذا المستفيد.",
+    "payment_approved": "موافقة",
+    "payment_rejected": "تخطي",
+    "enter_value": "أدخل القيمة",
+
+    # ---- success_offline.html ----
+    "success_title": "تم الإرسال بنجاح",
+    "success_message": "يمكنك الآن مسح المستفيد التالي.",
+    "payments_ready": "المدفوعات الجاهزة للإرسال إلى 121:",
+    "scan_next": "مسح المستفيد التالي",
+    "go_home": "هل انتهيت من المسح؟ اذهب إلى الصفحة الرئيسية",
+
+    # ---- invalid-qr.html ----
     "invalid_qr_title": "رمز QR غير صالح",
     "invalid_qr_message": "لا يمكن استخدام رمز QR هذا.",
     "checking_reason": "جارٍ التحقق من السبب…",
-    "scan_next": "مسح المستفيد التالي",
-    "go_home": "هل انتهيت من المسح؟ اذهب إلى الصفحة الرئيسية",
     "reason_used": "تم استخدام رمز QR هذا سابقًا.",
     "reason_invalid": "رمز QR غير صالح أو غير معروف.",
     "reason_no_record": "لا يوجد أي مستفيد مطابق لهذا الرمز.",
     "reason_database": "حدثت مشكلة في قراءة البيانات دون اتصال. حاول مرة أخرى.",
-    "success_title": "تم الإرسال بنجاح",
-    "success_subtitle": "يمكنك الآن مسح المستفيد التالي.",
-    "counter_loading": "المدفوعات الجاهزة للإرسال إلى 121: ...",
-    "counter_label": "المدفوعات الجاهزة للإرسال إلى 121:",
-    "payment_prep": "Prepare to send payments",
-    "login_error": "اسم المستخدم أو كلمة المرور غير صحيحة.",
-    "admin_dashboard_title": "لوحة تحكم المسؤول",
-    "admin_dashboard_subtitle": "إدارة إعدادات 121 Scan وأدوات القسائم",
-    "config_system_desc": "تعديل مفاتيح API ونقاط النهاية ومعلمات النظام.",
-    "config_display_desc": "تكوين الحقول والمعلومات التي يتم عرضها لمقدمي الخدمات المالية.",
-    "generate_vouchers_desc": "إنشاء قسائم QR للطباعة والتوزيع.",
-    "program_information": "معلومات البرنامج",
-    "credentials": "بيانات تسجيل الدخول",
-    "url_121": "رابط 121",
-    "program_id": "اختر البرنامج",
-    "username_121": "اسم المستخدم 121",
-    "password_121": "كلمة مرور 121",
-    "field_name_121": "اسم الحقل في 121",
-    "matching_field_title": "حقل 121 لمطابقة الدفعات",
-    "matching_field_desc": "يحتوي هذا الحقل على المعرّف الفريد من نظام 121 المستخدم لمطابقة المستفيدين مع الدفعات.",
-    "matching_field_placeholder": "مثال: phoneNumber",
-    "wrong_credentials": "اسم المستخدم أو كلمة المرور غير صحيحة.",
-    "api_unreachable": "تعذّر الاتصال بالخادم. يرجى المحاولة مرة أخرى.",
-    "login_failed_generic": "فشل تسجيل الدخول. يرجى المحاولة مرة أخرى.",
-    "go_back": "عودة",
-    "program_title": "عنوان البرنامج",
-    "connected_to": "متصل بالنموذج:",
-    "form_owner": "المالك",
-    "no_form_connected": "تعذّر تحميل تفاصيل النموذج",
-    "kobo_connection": "اتصال كوبا",
-    "payment_amount": "مبلغ الدفع",
-    "program": "البرنامج",
-    "loading_counter": "المدفوعات الجاهزة للإرسال إلى 121: ...",
-    "home_title": "مرحبًا",
-    "current_program": "البرنامج",
-    "people_scanned": "الأشخاص الذين تم مسحهم:",
-    "beneficiaries_ready_to_scan": "جاهزون للمسح:",
-    "last_synced": "آخر مزامنة:",
-    "total_amount": "المبلغ الإجمالي:",
-    "payments_ready_send": "المدفوعات الجاهزة للإرسال",
-    "last_payments_submit": "آخر إرسال:",
-    "cannot_sync_offline": "لا يمكن المزامنة دون اتصال",
-    "cannot_send_offline": "لا يمكن الإرسال دون اتصال",
-    "loading_photo": "جارٍ تحميل الصورة…",
-    "decryption_enabled": "فك التشفير مُفعَّل",
-    "select_field_121": "اختر حقلاً",
-    "select_option": "اختر...",
-    "voucher_design": "تصميم القسيمة",
-    "voucher_design_title": "تصميم القسيمة",
-    "voucher_design_desc": "خصّص العنوان والعنوان الفرعي والشعارات المطبوعة على قسائم كل برنامج.",
-    "voucher_design_settings": "إعدادات التصميم",
-    "voucher_design_settings_desc": "تحل هذه محل القيم المطبوعة على القسيمة. يحتفظ كل برنامج بتصميمه الخاص.",
-    "voucher_title_label": "العنوان",
-    "voucher_subtitle_label": "العنوان الفرعي",
-    "voucher_logos_label": "الشعارات",
-    "voucher_left_logo": "الشعار الأيسر",
-    "voucher_right_logo": "الشعار الأيمن",
-    "voucher_logo_upload": "رفع",
-    "voucher_logo_remove": "إزالة",
-    "voucher_no_logo": "لا يوجد شعار",
-    "voucher_live_preview": "معاينة مباشرة",
-    "voucher_preview_desc": "A5 أفقي، مطابق لتخطيط القسيمة المطبوعة.",
-    "voucher_save_design": "حفظ التصميم",
-    "voucher_design_saved": "تم حفظ التصميم",
-    "voucher_design_save_failed": "تعذّر حفظ التصميم",
+
+    # ---- vouchers.html (upload + field order) ----
+    "voucher_generator": "مولّد القسائم",
+    "csv_hint": "قم بتحميل ملف CSV أو Excel يحتوي على referenceId وأي حقول إضافية للطباعة",
+    "choose_csv": "اختر ملف CSV أو Excel…",
+    "upload_csv": "تحميل ملف CSV أو Excel",
+    "download_vouchers": "تنزيل القسائم (PDF)",
+    "choose_csv_alert": "يرجى اختيار ملف CSV أولاً.",
+    "upload_failed": "فشل الرفع",
+    "voucher_ready_singular": "قسيمة جاهزة للتنزيل",
+    "voucher_ready_plural": "قسائم جاهزة للتنزيل",
     "voucher_design_incomplete_title": "لم يكتمل تصميم القسيمة",
     "voucher_design_incomplete_desc": "لا يحتوي هذا البرنامج على تصميم قسيمة بعد. حدّد العنوان والعنوان الفرعي والشعارات قبل إنشاء القسائم.",
     "voucher_design_go": "تصميم هذه القسيمة",
-    "voucher_logo_size": "الحجم",
-    "voucher_show_qr": "إظهار رمز QR",
-    "voucher_show_qr_hint": "أوقف التشغيل إذا كانت قسائم هذا البرنامج لا تحتاج إلى رمز QR.",
-    "voucher_size_small": "صغير",
-    "voucher_size_medium": "متوسط",
-    "voucher_size_large": "كبير",
     "voucher_fields_title": "الحقول على القسيمة",
     "voucher_fields_hint": "اسحب لإعادة الترتيب. انقر على الاسم لتغيير طريقة طباعته. أوقف أي حقل لاستثنائه من القسيمة. يُحفظ ذلك لهذا البرنامج.",
     "voucher_fields_none": "لم يتم العثور على أعمدة قابلة للطباعة في هذا الملف.",
@@ -1524,43 +1479,37 @@ translations = {
     "voucher_fields_column": "العمود في ملفك",
     "voucher_fields_reset": "إعادة تعيين",
     "voucher_fields_reset_title": "إعادة التعيين إلى",
-    # --- added 2026-07-17: machine-translated, review as needed ---
-    "status_online": "متصل",
-    "status_online_sub": "لديك اتصال بالإنترنت",
-    "status_offline": "لا يوجد اتصال",
-    "status_offline_sub": "تحقق من الإشارة",
-    "status_offline_mode": "وضع عدم الاتصال",
-    "status_offline_mode_sub": "لن يستخدم التطبيق الإنترنت",
-    "work_offline": "العمل دون اتصال",
-    "go_back_online": "العودة إلى الاتصال",
-    "all_collected": "تم بالفعل استلام جميع المدفوعات لهذا المستفيد.",
-    "multiple_payments": "لدى هذا المستفيد أكثر من دفعة مسجّلة. اختر الدفعة التي توزّعها.",
-    "select_payment": "اختر دفعة",
-    "selected": "محدد",
-    "config_subtitle": "اختر الحقول التي تظهر أثناء المسح وحدد تسمياتها بكل لغة. يسحب التقاط الصور خياراته من نموذج KoboToolbox الخاص بالبرنامج.",
-    "config_program_hint": "تنطبق الإعدادات أدناه على البرنامج المحدد",
-    "config_select_or_delete": "يرجى تحديد حقل أو حذف الصفوف المميزة قبل الحفظ.",
-    "fields_section_title": "الحقول المعروضة",
-    "fields_section_hint": "اختر حقلاً، ثم اضبط تسميته لكل لغة. تُملأ التسميات تلقائيًا ويمكن تعديلها.",
-    "scan_section_hint": "اختر كيفية تحديد هوية المستفيدين.",
-    "photo_section_hint": "يرتبط بسؤال صورة في نموذج KoboToolbox الخاص بالبرنامج. تُملأ التسميات من Kobo.",
-    "enable_photo_field_hint": "عند التفعيل، يمكن للموظفين إرفاق صورة بحقل الصورة المحدد في Kobo.",
-    "kobo_prefill_note": "تم ملء التسميات من KoboToolbox — عدّلها إذا لزم الأمر",
-    "no_read_banner": "تعذّرت قراءة رمز QR هذا",
-    "no_read_banner_sub": "اكتب المعرّف المرجعي المطبوع أسفل رمز QR في المربع أدناه.",
-    "no_read_hint": "تعذّرت قراءة رمز QR هذا — قد يكون ضبابيًا أو باهتًا أو منخفض الجودة. أدخل المعرّف المرجعي المطبوع أسفل الرمز في المربع أدناه.",
-    "scan_trouble_hint": "لا تزال قراءة الرمز جارية — ثبّت الجهاز واقترب قليلاً.",
-    "decoder_unavailable": "تعذّر تشغيل الماسح الضوئي على هذا الجهاز. أدخل المعرّف المرجعي المطبوع أسفل رمز QR في المربع أدناه.",
-    "verify_token": "التحقق من الرمز",
-    "verifying": "جارٍ التحقق…",
-    "verify_unreachable": "تعذّر الوصول إلى الخادم.",
-    "enter_token_first": "أدخل رمزًا جديدًا أعلاه، ثم تحقق.",
-    "token_invalid": "الرمز غير صالح لهذا الخادم.",
-    "token_linked_to": "الرمز مرتبط بـ",
-    "kobo_api_token": "رمز API",
-    "kobo_token_hint": "يوجد في KoboToolbox ضمن إعدادات الحساب ← الأمان ← رمز API.",
-    "program_map_hint": "يرتبط كل برنامج 121 بنموذج KoboToolbox الذي يجمع بياناته.",
-}
+
+    # ---- voucher_design.html ----
+    "voucher_design_title": "تصميم القسيمة",
+    "voucher_design_settings": "إعدادات التصميم",
+    "voucher_design_settings_desc": "تحل هذه محل القيم المطبوعة على القسيمة. يحتفظ كل برنامج بتصميمه الخاص.",
+    "voucher_title_label": "العنوان",
+    "voucher_subtitle_label": "العنوان الفرعي",
+    "voucher_logos_label": "الشعارات",
+    "voucher_left_logo": "الشعار الأيسر",
+    "voucher_right_logo": "الشعار الأيمن",
+    "voucher_logo_upload": "رفع",
+    "voucher_logo_remove": "إزالة",
+    "voucher_no_logo": "لا يوجد شعار",
+    "voucher_logo_size": "الحجم",
+    "voucher_size_small": "صغير",
+    "voucher_size_medium": "متوسط",
+    "voucher_size_large": "كبير",
+    "voucher_show_qr": "إظهار رمز QR",
+    "voucher_show_qr_hint": "أوقف التشغيل إذا كانت قسائم هذا البرنامج لا تحتاج إلى رمز QR.",
+    "voucher_live_preview": "معاينة مباشرة",
+    "voucher_preview_desc": "A5 أفقي، مطابق لتخطيط القسيمة المطبوعة.",
+    "voucher_save_design": "حفظ التصميم",
+    "voucher_design_saved": "تم حفظ التصميم",
+    "voucher_design_save_failed": "تعذّر حفظ التصميم",
+    "lookup_min": "أدخل {n} أحرف على الأقل من الرمز.",
+    "lookup_many": "{n} تطابقات محتملة — تابع الإدخال.",
+    "lookup_one": "تم العثور على تطابق واحد — اضغط تأكيد.",
+    "lookup_none": "لا يوجد تطابق في السجلات المحفوظة. تحقق من الرمز.",
+    "verify_only_note": "التحقق فقط — لا يمكن لحسابك تسجيل المدفوعات."
+},
+
 }
 
 
@@ -1802,6 +1751,42 @@ def system_config():
         t=t,
     )
 
+@app.route("/verify-kobo-token", methods=["POST"])
+def verify_kobo_token():
+    if not session.get("admin_logged_in"):
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    server = (data.get("server") or "").strip().rstrip("/")
+    token = (data.get("token") or "").strip()
+
+    if not server or not token:
+        return jsonify({"ok": False, "error": "Server and token are required."}), 400
+
+    headers = {"Authorization": f"Token {token}"}
+
+    for path in ("/api/v2/me/?format=json", "/me/?format=json"):
+        try:
+            r = requests.get(f"{server}{path}", headers=headers, timeout=10)
+        except Exception as e:
+            print("Kobo verify failed:", e)
+            return jsonify({"ok": False, "error": "Could not reach the server."}), 200
+
+        if r.status_code == 200:
+            try:
+                j = r.json()
+            except Exception:
+                continue
+            return jsonify({
+                "ok": True,
+                "username": j.get("username", ""),
+                "email": j.get("email", ""),
+            })
+
+        if r.status_code in (401, 403):
+            return jsonify({"ok": False, "error": "Token not valid for this server."}), 200
+
+    return jsonify({"ok": False, "error": "Token not valid for this server."}), 200
 
 @app.route("/api/program-attributes/<int:program_id>")
 def api_program_attributes(program_id):
@@ -2057,20 +2042,25 @@ def config_page():
                 cookies = {"access_token_general": token}
 
                 # Column to match
+                # The inner `break` left the outer loop running, so this page
+                # took the LAST configuration while offline_sync.py took the
+                # FIRST — they actively disagreed on any multi-FSP program, and
+                # this page then persisted its answer into
+                # COLUMN_TO_MATCH_PER_PROGRAM where the sync would read it back.
+                # Only report a value when every configuration agrees.
                 try:
-                    r = requests.get(
-                        f"{url121}/api/programs/{program_id}/fsp-configurations",
-                        cookies=cookies,
-                        timeout=10,
-                    )
-                    if r.status_code == 200:
-                        for fsp in r.json():
-                            for prop in fsp.get("properties", []):
-                                if prop.get("name") == "columnToMatch":
-                                    column_to_match_121 = prop.get("value")
-                                    break
-                except Exception:
-                    pass
+                    _map = get_fsp_column_map(program_id)
+                    _unique = sorted(set(_map.values()))
+                    if len(_unique) == 1:
+                        column_to_match_121 = _unique[0]
+                    elif len(_unique) > 1:
+                        column_to_match_121 = None
+                        print(
+                            f"[config] program {program_id} has per-FSP match "
+                            f"columns {_map} — resolved per payment at sync time."
+                        )
+                except Exception as e:
+                    print(f"[config] fsp-configurations lookup failed: {e}")
 
                 # Registration attributes
                 try:
@@ -2107,6 +2097,21 @@ def config_page():
             pdata["fields"] = [
                 f for f in pdata.get("fields", []) if f.get("key") in allowed_names
             ]
+
+            # Same treatment for the lookup field. A configured attribute that
+            # 121 no longer exposes can never match anything typed into the
+            # scan box, and would fail silently in the field — so it reverts to
+            # the reference ID, which always exists.
+            _lookup = pdata.get("lookup") or {}
+            _lookup_key = _lookup.get("field")
+            if _lookup_key and _lookup_key != "referenceId" \
+                    and _lookup_key not in allowed_names:
+                print(
+                    f"[config] program {active_program_id}: lookup field "
+                    f"'{_lookup_key}' is not a 121 attribute — reverting to "
+                    "referenceId."
+                )
+                pdata["lookup"] = {"field": "referenceId"}
 
     # ------------------------------------------------------
     # Kobo image fields
@@ -2187,16 +2192,11 @@ def config_page():
             if pdata.get("photo", {}).get("field_name") not in valid:
                 pdata.setdefault("photo", {})["field_name"] = ""
 
-    # ------------------------------------------------------
-    # Persist COLUMN_TO_MATCH
-    # ------------------------------------------------------
-    if column_to_match_121 and active_program_id:
-        per_program = system_config.setdefault("COLUMN_TO_MATCH_PER_PROGRAM", {})
-        per_program[str(active_program_id)] = column_to_match_121
-        try:
-            save_config(system_config)
-        except Exception:
-            pass
+    # COLUMN_TO_MATCH_PER_PROGRAM is no longer written or read. The match column
+    # is resolved per payment from the FSP configuration at sync and submit
+    # time (INVARIANT 5: no program-scoped copy can go stale, because none
+    # exists). Existing entries in system_config.json are inert and can be
+    # deleted.
 
     # ------------------------------------------------------
     # RENDER
@@ -2209,7 +2209,9 @@ def config_page():
         system_config=system_config,
         allowed_attributes=allowed_attributes,
         kobo_image_fields=kobo_image_fields,
-        column_to_match_121=column_to_match_121 or system_config.get("COLUMN_TO_MATCH"),
+        # No global fallback: when the program's FSP configurations disagree the
+        # honest answer is "resolved per payment", not one arbitrary column.
+        column_to_match_121=column_to_match_121,
         lang=lang,
         username=username,
         program_title=program_title,
@@ -2394,9 +2396,11 @@ def fsp_admin():
     # Pass full display config to template so it can be stored in IndexedDB
     display_config = _full_display
 
-    column_to_match = get_column_to_match(program_id) or system_config.get(
-        "COLUMN_TO_MATCH"
-    )
+    # Kept only to satisfy the template's COLUMN_TO_MATCH variable. It is no
+    # longer used for reconciliation — the device reads the column off each
+    # tranche. Populated only when every FSP configuration agrees.
+    _cols = set(get_fsp_column_map(program_id).values())
+    column_to_match = _cols.pop() if len(_cols) == 1 else ""
     programs = system_config.get("PROGRAMS", [])
 
     # --- resolve program ---
@@ -2438,6 +2442,33 @@ def fsp_admin():
     # --- IMPORTANT: persist program for later routes ---
     session["fsp_program_id"] = program_id
 
+    # Two separate questions, because they fail at two different endpoints.
+    #
+    # Tri-state (see _has_program_permission): only a DEFINITE False hides
+    # anything. None means 121's login response carried no readable permissions
+    # map — we fail open there, exactly as /submit-payments does, because
+    # blocking every distribution over a changed response shape would be far
+    # worse than a late 403 from 121 itself.
+
+    # 1. Can this operator reconcile payments? Gates the Send block.
+    can_update_payments = (
+        _has_program_permission("fsp", program_id, "payment.update") is not False
+    )
+
+    # 2. Can this operator update registrations? Gates the editable fields,
+    #    which are pushed by PATCH /api/programs/{id}/registrations. Without
+    #    these, 121 rejects the whole bulk update AFTER the payments have
+    #    already gone through — so the input must never appear in the first
+    #    place.
+    can_update_registrations = all(
+        _has_program_permission("fsp", program_id, perm) is not False
+        for perm in REGISTRATION_UPDATE_PERMISSIONS
+    )
+
+    # An edit can only reach 121 via Send, so it needs both. Showing an input
+    # to someone who cannot Send would collect data into a dead end.
+    can_edit_fields = can_update_payments and can_update_registrations
+
     return render_template(
         "fsp_admin.html",
         COLUMN_TO_MATCH=column_to_match,
@@ -2448,8 +2479,9 @@ def fsp_admin():
         program_title=program_title,
         program_id=program_id,  # ✅ this feeds ACTIVE_PROGRAM_ID in JS
         username=username,
+        can_update_payments=can_update_payments,
+        can_edit_fields=can_edit_fields,
     )
-
 
 # ---------------------------------------------------------------------------
 # BACKGROUND SYNC JOB RUNNER
@@ -2891,6 +2923,19 @@ def scan():
             except Exception as e:
                 print(f"[scan] Failed to fetch 121 program title: {e}")
 
+    # The scan box can now match on a configured registration attribute, whose
+    # value is Fernet-encrypted in the offline cache — so this page needs the
+    # key, exactly as /beneficiary-offline does.
+    #
+    # CAVEAT: /scan is precached cacheFirst by the service worker, so this
+    # baked-in value freezes at precache time and would go stale if
+    # ENCRYPTION_KEY were rotated. scan.html prefers meta.encryptionKey from
+    # IndexedDB and treats this only as the fallback.
+    try:
+        fernet_key = load_config().get("ENCRYPTION_KEY", "")
+    except Exception:
+        fernet_key = ""
+
     return render_template(
         "scan.html",
         lang=lang,
@@ -2898,9 +2943,9 @@ def scan():
         username=username,
         program_title=program_title,
         program_id=program_id or "",
-        qr_enabled=qr_enabled
+        qr_enabled=qr_enabled,
+        fernet_key=fernet_key,
     )
-
 
 @app.route("/service-worker.js")
 def sw():
@@ -2970,6 +3015,111 @@ def api_offline_latest_zip():
         download_name="latest_offline_cache.zip",
     )
 
+@app.route("/api/program-field-uniqueness/<program_id>")
+def api_program_field_uniqueness(program_id):
+    """Is <field> unique across this programme's registrations in 121?
+
+    Answers the config page's warning badge. Deliberately returns counts only —
+    never the offending values — so this endpoint cannot be used to enumerate
+    the caseload.
+
+    Counts are a snapshot. A field that is unique today can gain a duplicate
+    tomorrow, which is why offline_sync.py re-checks the same thing against the
+    actual batch at sync time (Patch 4).
+    """
+    if not session.get("admin_logged_in"):
+        return jsonify({"error": "unauthorized"}), 401
+
+    field = (request.args.get("field") or "").strip()
+
+    # The reference ID is unique by construction in 121 — no need to walk the
+    # caseload to prove it.
+    if not field or field == "referenceId":
+        return jsonify({
+            "field": field or "referenceId",
+            "checked": 0, "blank": 0,
+            "duplicateValues": 0, "affectedRegistrations": 0,
+            "unique": True, "skipped": True,
+        })
+
+    system_config = load_config()
+    url121 = system_config.get("url121")
+    if not url121:
+        return jsonify({"error": "121 URL is not configured"}), 503
+
+    try:
+        login_resp = requests.post(
+            f"{url121}/api/users/login",
+            json={
+                "username": system_config.get("username121", ""),
+                "password": system_config.get("password121", ""),
+            },
+            timeout=10,
+        )
+        if login_resp.status_code != 201:
+            return jsonify({"error": "121 login failed"}), 502
+        cookies = {
+            "access_token_general": login_resp.json().get("access_token_general")
+        }
+
+        # Same pagination discipline as offline_sync._fetch_all: ask for
+        # limit=-1 first, then verify against meta.totalItems and page
+        # explicitly if the server paginated us anyway. A silently truncated
+        # read here would report "unique" for a field that is not.
+        url = f"{url121}/api/programs/{program_id}/registrations"
+        rows, total = [], None
+
+        r = requests.get(url, cookies=cookies, params={"limit": -1}, timeout=60)
+        r.raise_for_status()
+        payload = r.json()
+        rows = payload.get("data", payload) if isinstance(payload, dict) else payload
+        rows = rows if isinstance(rows, list) else []
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        total = (meta or {}).get("totalItems")
+
+        if total is not None and len(rows) < total:
+            rows = []
+            page, page_size, max_pages = 1, 1000, 100
+            while page <= max_pages:
+                pr = requests.get(
+                    url, cookies=cookies,
+                    params={"limit": page_size, "page": page}, timeout=60,
+                )
+                pr.raise_for_status()
+                pp = pr.json()
+                batch = pp.get("data", []) if isinstance(pp, dict) else pp
+                if not batch:
+                    break
+                rows.extend(batch)
+                if total is not None and len(rows) >= total:
+                    break
+                page += 1
+
+        # Truthful about incompleteness rather than quietly reporting on a
+        # partial read.
+        truncated = total is not None and len(rows) < total
+
+        from collections import Counter
+        values = [str((row or {}).get(field) or "").strip() for row in rows]
+        blank = sum(1 for v in values if not v)
+        counts = Counter(v.lower() for v in values if v)
+        dupes = {v: c for v, c in counts.items() if c > 1}
+
+        return jsonify({
+            "field": field,
+            "checked": len(rows),
+            "reportedTotal": total,
+            "truncated": truncated,
+            "blank": blank,
+            "duplicateValues": len(dupes),
+            "affectedRegistrations": sum(dupes.values()),
+            "unique": not dupes,
+        })
+
+    except Exception as e:
+        print(f"[uniqueness] program {program_id} field '{field}': {e}")
+        return jsonify({"error": str(e)}), 502
+
 
 @app.route("/ping")
 def ping():
@@ -3004,10 +3154,11 @@ def beneficiary_offline():
 
     config = load_config()
     enc_key = config.get("ENCRYPTION_KEY", "")
-    column_to_match = get_column_to_match(program_id) or config.get(
-        "COLUMN_TO_MATCH", ""
-    )
-
+    # Legacy template variable. This page is served cacheFirst by the service
+    # worker, so anything baked in here is frozen at precache time — it must
+    # never be the authority. The device resolves the column per tranche.
+    _cols = set(get_fsp_column_map(program_id).values())
+    column_to_match = _cols.pop() if len(_cols) == 1 else ""
     return render_template(
         "beneficiary_offline.html",
         uuid=uuid,  # may be "", the page will prefer URL ?uuid=...
@@ -3042,47 +3193,152 @@ def system_config_json():
     return jsonify({"COLUMN_TO_MATCH": column})
 
 
-@app.route("/api/column-to-match/<program_id>")
-def api_column_to_match(program_id):
+@app.route("/api/match-columns/<program_id>")
+def api_match_columns(program_id):
+    """Diagnostic: the full FSP-configuration -> columnToMatch mapping, plus the
+    resolved column for each open payment.
+
+    This is the view that did not exist when a single wrong column silently
+    reached the field. Open it before any distribution to confirm the payment
+    being run resolves to the column you expect.
     """
-    Returns the columnToMatch for a specific program, fetched fresh from the 121
-    API (with system_config fallback). The FSP admin page calls this during
-    sync so the offline beneficiary page can use the correct value at decision
-    time, even when its HTML shell was precached without session context.
-    """
-    config = load_config()
-    column = get_column_to_match(program_id) or config.get("COLUMN_TO_MATCH")
-    if not column:
-        return jsonify({"error": "columnToMatch could not be resolved"}), 404
-    return jsonify({"programId": str(program_id), "columnToMatch": column})
+    token = get_121_token()
+    if not token:
+        return jsonify({"error": "Login to 121 failed"}), 502
+
+    col_map = get_fsp_column_map(program_id, token=token)
+    if not col_map:
+        return jsonify({"error": "No FSP configuration reports a columnToMatch"}), 404
+
+    payments = []
+    try:
+        config = load_config()
+        r = requests.get(
+            f"{config['url121']}/api/programs/{program_id}/payments",
+            cookies={"access_token_general": token},
+            params={"limit": -1},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            payload = r.json()
+            items = payload if isinstance(payload, list) else payload.get("data", [])
+            for p in items:
+                pid = p.get("paymentId", p.get("id"))
+                if pid is None:
+                    continue
+                payments.append({
+                    "paymentId": pid,
+                    "name": p.get("name"),
+                    "waiting": ((p.get("aggregationsPerStatus") or {}).get("waiting") or {}).get("count", 0),
+                    "columnToMatch": get_column_for_payment(
+                        program_id, pid, col_map=col_map, token=token
+                    ),
+                })
+    except Exception as e:
+        print(f"[api_match_columns] {e}")
+
+    return jsonify({
+        "programId": str(program_id),
+        "fspConfigurations": col_map,
+        "payments": payments,
+        "ambiguous": len(set(col_map.values())) > 1,
+    })
 
 
-def get_column_to_match(program_id):
-    """Fetch columnToMatch for a program from the 121 API.
-    Falls back to system_config COLUMN_TO_MATCH if API unavailable."""
+def get_fsp_column_map(program_id, token=None):
+    """{programFspConfigurationName: columnToMatch}, or {} on failure.
+
+    Mirrors offline_sync.build_fsp_column_map. Keyed on the configuration NAME
+    — never array order.
+    """
     config = load_config()
     url121 = config.get("url121")
+    if not (url121 and program_id):
+        return {}
 
-    if url121 and program_id:
-        try:
-            token = get_121_token()
-            if token:
-                r = requests.get(
-                    f"{url121}/api/programs/{program_id}/fsp-configurations",
-                    cookies={"access_token_general": token},
-                    timeout=10,
-                )
-                if r.status_code == 200:
-                    for fsp in r.json():
-                        for prop in fsp.get("properties", []):
-                            if prop.get("name") == "columnToMatch":
-                                return prop.get("value")
-        except Exception as e:
-            print(f"[get_column_to_match] API error: {e}")
+    token = token or get_121_token()
+    if not token:
+        return {}
 
-    # Fallback to per-program stored value, then legacy global value
-    per_program = config.get("COLUMN_TO_MATCH_PER_PROGRAM", {})
-    return per_program.get(str(program_id)) or config.get("COLUMN_TO_MATCH")
+    try:
+        r = requests.get(
+            f"{url121}/api/programs/{program_id}/fsp-configurations",
+            cookies={"access_token_general": token},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            print(f"[get_fsp_column_map] program {program_id}: HTTP {r.status_code}")
+            return {}
+        payload = r.json()
+        configs = payload if isinstance(payload, list) else payload.get("data", [])
+    except Exception as e:
+        print(f"[get_fsp_column_map] API error: {e}")
+        return {}
+
+    col_map = {}
+    for fsp in configs:
+        if not isinstance(fsp, dict):
+            continue
+        name = fsp.get("name")
+        if not name:
+            continue
+        for prop in fsp.get("properties", []):
+            if prop.get("name") == "columnToMatch" and prop.get("value"):
+                col_map[name] = prop["value"]
+                break
+    return col_map
+
+
+def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
+    """The columnToMatch for ONE payment, or None.
+
+    This is the ONLY correct scope. There is deliberately no program-level
+    fallback and no global: a program can run several FSP configurations at
+    once with different columns, and picking one arbitrarily silently
+    reconciles against the wrong field.
+    """
+    config = load_config()
+    url121 = config.get("url121")
+    if not (url121 and program_id and payment_id):
+        return None
+
+    token = token or get_121_token()
+    if not token:
+        return None
+    if col_map is None:
+        col_map = get_fsp_column_map(program_id, token=token)
+    if not col_map:
+        return None
+
+    try:
+        r = requests.get(
+            f"{url121}/api/programs/{program_id}/payments/{payment_id}",
+            cookies={"access_token_general": token},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            print(f"[get_column_for_payment] payment {payment_id}: HTTP {r.status_code}")
+            return None
+        fsps = r.json().get("fsps") or []
+    except Exception as e:
+        print(f"[get_column_for_payment] API error: {e}")
+        return None
+
+    names = [
+        f.get("programFspConfigurationName")
+        for f in fsps
+        if isinstance(f, dict) and f.get("programFspConfigurationName")
+    ]
+    columns = {col_map[n] for n in names if n in col_map}
+
+    if len(columns) == 1:
+        return columns.pop()
+    if len(columns) > 1:
+        print(
+            f"[get_column_for_payment] payment {payment_id} spans FSP configs "
+            f"{names} with conflicting columns {sorted(columns)} — cannot reconcile."
+        )
+    return None
 
 
 def get_121_token():
@@ -3181,6 +3437,20 @@ def _clear_login_session(role):
         session.pop("fsp_program_id", None)
 
 
+# Permissions 121 requires for PATCH /api/programs/{id}/registrations, which is
+# what /submit-registration-updates calls to push editable-field values.
+#
+# Both are required rather than either: 121 splits ordinary registration
+# attributes (attribute.update) from PII-flagged ones (personal.update), the
+# app cannot tell which category a configured editable field falls into without
+# an extra per-attribute lookup, and the bulk PATCH is all-or-nothing — one
+# missing permission fails the entire batch, not just the PII rows.
+REGISTRATION_UPDATE_PERMISSIONS = (
+    "registration:attribute.update",
+    "registration:personal.update",
+)
+
+
 def _has_program_permission(role, program_id, permission):
     """Tri-state: True / False / None when 121 did not tell us.
 
@@ -3242,14 +3512,19 @@ def submit_payments():
                 400,
             )
 
-        # Fetch column_to_match from 121 API for this specific program
-        column_to_match = get_column_to_match(program_id)
-
-        if not column_to_match:
+        # Match columns are per FSP configuration, reached via the payment.
+        # Built once here; each paymentId is resolved against it in the
+        # submission loop below. No token is passed: this is a configuration
+        # read, so it uses the service account, which is guaranteed to have
+        # access even when the submitting user's role does not.
+        fsp_col_map = get_fsp_column_map(program_id)
+        if not fsp_col_map:
             return (
-                f"❌ Could not determine columnToMatch for program {program_id}. Check 121 FSP configuration.",
+                f"❌ Could not read the FSP configurations for program {program_id}. "
+                "Check 121 connectivity and that this account has access.",
                 400,
             )
+        payment_columns = {}  # paymentId -> column, resolved lazily below
 
         if not fernet_key:
             return "❌ Missing ENCRYPTION_KEY in system_config.json", 400
@@ -3353,41 +3628,28 @@ def submit_payments():
         except Exception as e:
             return f"❌ Failed to load registrations_cache.json — {e}", 500
 
+        # The old "match value -> paymentId" cache map lived here. It keyed rows
+        # by match value under ONE program-wide column, which cannot work now
+        # that different payments use different columns — it would reconcile an
+        # arbitrary payment. paymentId is required on every row instead.
+        #
         # -------------------------------
-        # BUILD MAP: plaintext match column → paymentId
-        # -------------------------------
-        match_to_pid = {}
-
-        for record in reg_data:
-            uuid = record.get("uuid")
-            payment_id = record.get("paymentId")
-
-            encrypted_value = record.get("data", {}).get(column_to_match, "")
-            record_data_encrypted = record.get("dataEncrypted")
-            if record_data_encrypted is None:
-                record_data_encrypted = cache_data_encrypted
-
-            if encrypted_value and payment_id:
-                if record_data_encrypted:
-                    try:
-                        decrypted_value = (
-                            fernet.decrypt(encrypted_value.encode()).decode().strip()
-                        )
-                        match_to_pid[decrypted_value] = payment_id
-                    except InvalidToken as e:
-                        print(
-                            f"[!] Failed to decrypt value for UUID {uuid} — invalid token: {e}"
-                        )
-                else:
-                    match_to_pid[str(encrypted_value).strip()] = payment_id
-
-        # -------------------------------
-        # GROUP CSV ROWS BY paymentId
         # -------------------------------
         grouped = {}
+        skipped_no_payment_id = 0
+
+        # Current devices emit a column-neutral "matchValue". Older ones emit a
+        # column named after whatever they thought the match column was, so
+        # fall back to the first non-metadata column in the row.
+        _META_COLS = {"status", "paymentId", "columnToMatch", "_scandroid_encrypted"}
 
         for row in rows:
-            raw_value = row.get(column_to_match, "").strip()
+            raw_value = (row.get("matchValue") or "").strip()
+            if not raw_value:
+                for _k, _v in row.items():
+                    if _k and _k not in _META_COLS and _k != "matchValue" and _v:
+                        raw_value = str(_v).strip()
+                        break
             status = row.get("status", "").strip()
 
             # Only decrypt CSV values when explicitly marked as encrypted.
@@ -3402,11 +3664,8 @@ def submit_payments():
                 try:
                     raw_value = fernet.decrypt(raw_value.encode()).decode().strip()
                 except InvalidToken as e:
-                    print(
-                        f"[!] Failed to decrypt incoming {column_to_match}: {raw_value} — invalid token: {e}"
-                    )
+                    print(f"[!] Failed to decrypt incoming match value — invalid token: {e}")
                     continue
-
             # Prefer the paymentId the FSP actually selected on the device.
             #
             # A beneficiary can hold several concurrent payments. match_to_pid is
@@ -3416,35 +3675,36 @@ def submit_payments():
             # out. The device now sends its choice in a paymentId column; the
             # cache lookup remains only as a fallback for CSVs produced by an
             # older client build.
-            row_payment_id = str(row.get("paymentId") or "").strip()
-            if row_payment_id:
-                payment_id = row_payment_id
-            else:
-                payment_id = match_to_pid.get(raw_value)
-                if payment_id:
-                    print(
-                        f"[warn] CSV row for {raw_value} carried no paymentId; "
-                        f"fell back to cached paymentId {payment_id}. This is "
-                        "ambiguous when the beneficiary has multiple payments — "
-                        "re-sync the device to get a paymentId-aware export."
-                    )
-
+            # paymentId is now REQUIRED. The old cache fallback keyed rows by
+            # match value under a single program-wide column — which cannot work
+            # once different payments use different columns, and would silently
+            # close out the wrong payment. A row without one is rejected rather
+            # than guessed at.
+            payment_id = str(row.get("paymentId") or "").strip()
             if not payment_id:
-                print(f"[!] No paymentId found for {column_to_match}: {raw_value}")
+                skipped_no_payment_id += 1
                 continue
 
-            grouped.setdefault(str(payment_id), []).append(
-                {column_to_match: raw_value, "status": status}
+            grouped.setdefault(payment_id, []).append(
+                {"matchValue": raw_value, "status": status}
             )
 
         if not grouped:
+            if skipped_no_payment_id:
+                return (
+                    f"❌ No valid rows to submit — {skipped_no_payment_id} row(s) "
+                    "carried no paymentId. This export came from an older app "
+                    "version. Sync the device while online and send again.",
+                    400,
+                )
             return (
-                f"❌ No valid rows to submit. Either the CSV's '{column_to_match}' values "
-                "don't match any cached registration, or the column name in the CSV differs "
-                "from the configured matching field. Re-sync and try again.",
+                "❌ No valid rows to submit — the CSV contained no usable match "
+                "values. Re-sync and try again.",
                 400,
             )
 
+        if skipped_no_payment_id:
+            print(f"[warn] {skipped_no_payment_id} row(s) skipped: no paymentId")
         # -------------------------------
         # SUBMIT TO 121 /paymentId/excel-reconciliation
         # -------------------------------
@@ -3472,15 +3732,34 @@ def submit_payments():
         failure_details = []
 
         for pid, items in grouped.items():
+            # The header 121 expects is a property of THIS payment's FSP
+            # configuration. Resolved per payment, live, inside the loop that
+            # already groups by payment.
+            if pid not in payment_columns:
+                payment_columns[pid] = get_column_for_payment(
+                    program_id, pid, col_map=fsp_col_map, token=token
+                )
+            pay_column = payment_columns[pid]
+
+            if not pay_column:
+                fail_count += 1
+                failure_details.append(
+                    f"paymentId {pid}: could not determine its match column from "
+                    "the 121 FSP configuration — not submitted"
+                )
+                continue
+
+            print(f"[OK] paymentId {pid}: reconciling on column '{pay_column}'")
+
             output_buffer = io.StringIO()
             writer = csv.DictWriter(
-                output_buffer, fieldnames=[column_to_match, "status"]
+                output_buffer, fieldnames=[pay_column, "status"]
             )
             writer.writeheader()
 
             for item in items:
                 writer.writerow(
-                    {column_to_match: item[column_to_match], "status": item["status"]}
+                    {pay_column: item["matchValue"], "status": item["status"]}
                 )
 
             upload_url = f"{config['url121']}/api/programs/{program_id}/payments/{pid}/excel-reconciliation"
@@ -3602,6 +3881,29 @@ def submit_registration_updates():
         token, actor_label, user_attributed = get_121_token_for_request("fsp")
         if not token:
             return "❌ Login to 121 failed", 401
+
+        # Hiding the inputs in the UI is not enforcement: without this, an
+        # account without the permission could POST here directly.
+        #
+        # payment.update is included because these edits are only ever sent as
+        # part of a Send; the two registration permissions are what 121 itself
+        # checks on the bulk PATCH. Tri-state — only a definite False is acted
+        # on, so an unreadable permissions map still lets 121 be the judge.
+        if user_attributed:
+            missing = [
+                perm
+                for perm in ("payment.update",) + REGISTRATION_UPDATE_PERMISSIONS
+                if _has_program_permission("fsp", program_id, perm) is False
+            ]
+            if missing:
+                return (
+                    f"❌ Your 121 account ({actor_label}) is not allowed to "
+                    f"update registrations for program {program_id}. Ask your "
+                    "121 administrator to add "
+                    + ", ".join(f"'{p}'" for p in missing)
+                    + " to your role.",
+                    403,
+                )
 
         print(f"[auth] submitting registration updates as {actor_label}")
 

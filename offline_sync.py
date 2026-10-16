@@ -73,7 +73,17 @@ display_config = load_display_config()
 _prog_config = display_config.get("programs", {}).get(str(program_id), {})
 FIELD_KEYS = [field["key"] for field in _prog_config.get("fields", [])]
 PHOTO_FIELD_NAME = _prog_config.get("photo", {}).get("field_name", "photo")
+
+# The attribute staff type into the scan box when the QR code cannot be used.
+# "referenceId" (the default) needs nothing extra cached — it IS the record key.
+# Anything else must be pulled into the batch, or the device has nothing to
+# match against and the setting silently does nothing in the field.
+LOOKUP_FIELD = str(
+    (_prog_config.get("lookup") or {}).get("field") or "referenceId"
+).strip() or "referenceId"
+
 logger.info(f"[INFO] Loaded {len(FIELD_KEYS)} field keys for program {program_id}: {FIELD_KEYS}")
+logger.info(f"[INFO] Lookup field for program {program_id}: '{LOOKUP_FIELD}'")
 
 try:
     fernet = Fernet(ENCRYPTION_KEY.encode())
@@ -389,33 +399,198 @@ def get_registration(program_id, registration_id):
     return response.json()
 
 
-def resolve_column_to_match(program_id):
-    """Resolve the columnToMatch for a program.
+# In 121, Excel is the only FSP whose integrationType is 'csv', and the only one
+# that declares columnToMatch (excel-settings.const.ts, isRequired: true). Every
+# other integration is 'api' and is reconciled by 121 itself.
+FSP_EXCEL = "Excel"
+FSP_TYPE_CSV = "csv"
+FSP_TYPE_API = "api"
 
-    The authoritative source is the 121 FSP configuration
-    (GET /api/programs/{id}/fsp-configurations -> a list of FSP configs, each
-    with a `properties` array containing a `columnToMatch` property). We fetch
-    it live at sync time so the bundle is built against the column 121 reports
-    right now. If the API can't be reached we fall back to the per-program value
-    stored in config, then the legacy global COLUMN_TO_MATCH — but the live
-    value is preferred and is what gets written into the batch manifest.
 
-    Returns the column name (str) or None if it truly cannot be determined.
+def build_fsp_column_map(program_id):
+    """Returns (col_map, fsp_types) for this program.
+
+        col_map   {programFspConfigurationName: columnToMatch}
+        fsp_types {programFspConfigurationName: 'csv' | 'api'}
+
+    INVARIANT 1: keyed on the configuration NAME, never on array position.
+    columnToMatch belongs to an FSP configuration, and a program routinely has
+    several with different values (program 2 has three: phoneNumber, fullName,
+    paID121). The old code returned the first one it happened to see, so the
+    answer depended on the order 121 serialised the array in.
+
+    INVARIANT 3: a non-200 raises. Silently treating "unauthorised" as "not
+    configured" is what let a wrong column reach the field with no log line.
+
+    INVARIANT 7: whether a payment can be reconciled offline is decided by the
+    FSP's integrationType, NEVER by the configuration's name. Names are free
+    text: this program has Excel configurations named 'mtn-direct',
+    'mtn-nouvel-sim' and 'mtn-ifrc-sim', while the real MTN api integration has
+    no columnToMatch at all. A name-based test is wrong in both directions.
     """
-    try:
-        url = f"{API_BASE}/programs/{program_id}/fsp-configurations"
-        r = requests.get(url, cookies=COOKIES, timeout=10)
-        if r.status_code == 200:
-            for fsp in r.json():
-                for prop in fsp.get("properties", []):
-                    if prop.get("name") == "columnToMatch" and prop.get("value"):
-                        return prop["value"]
-    except Exception as e:
-        logger.warning("[resolve_column_to_match] API error for program %s: %s", program_id, e)
+    url = f"{API_BASE}/programs/{program_id}/fsp-configurations"
+    r = requests.get(url, cookies=COOKIES, timeout=REQUEST_TIMEOUT)
+    r.raise_for_status()
 
-    per_program = config.get("COLUMN_TO_MATCH_PER_PROGRAM", {})
-    return per_program.get(str(program_id)) or config.get("COLUMN_TO_MATCH")
+    payload = r.json()
+    configs = payload if isinstance(payload, list) else payload.get("data", [])
 
+    col_map = {}
+    fsp_types = {}
+
+    for fsp in configs:
+        if not isinstance(fsp, dict):
+            continue
+        name = fsp.get("name")
+        if not name:
+            continue
+
+        # The nested `fsp` block carries the integration settings. 121's own DTO
+        # notes it can be undefined when an integration has been removed from
+        # the codebase, so fall back to the fspName enum value.
+        settings = fsp.get("fsp") or {}
+        integration_type = settings.get("integrationType")
+        if not integration_type:
+            integration_type = (
+                FSP_TYPE_CSV if fsp.get("fspName") == FSP_EXCEL else FSP_TYPE_API
+            )
+        fsp_types[name] = integration_type
+
+        for prop in fsp.get("properties", []):
+            if prop.get("name") == "columnToMatch" and prop.get("value"):
+                col_map[name] = prop["value"]
+                break
+
+    csv_configs = sorted(n for n, t in fsp_types.items() if t == FSP_TYPE_CSV)
+
+    if not csv_configs:
+        raise IncompleteSyncError(
+            f"Program {program_id} has no Excel FSP configuration. 121 Scan "
+            "reconciles payments by Excel upload, so there is nothing here it "
+            f"can distribute. Configurations found: {sorted(fsp_types)}"
+        )
+
+    # INVARIANT 8. Stricter than the old `if not col_map`, which fired only when
+    # EVERY configuration lacked a column. columnToMatch is a REQUIRED property
+    # of the Excel FSP, so an Excel configuration without one is a genuine 121
+    # misconfiguration and must still stop the sync — even if another Excel
+    # configuration on the same program is fine.
+    misconfigured = [n for n in csv_configs if n not in col_map]
+    if misconfigured:
+        raise IncompleteSyncError(
+            f"Program {program_id}: Excel FSP configuration(s) {misconfigured} "
+            "have no columnToMatch. It is a required property — set 'Field for "
+            "identifying registrations' on that configuration in 121."
+        )
+
+    for name in sorted(fsp_types):
+        if fsp_types[name] == FSP_TYPE_CSV:
+            logger.info("[fsp-config] %s (excel) -> columnToMatch '%s'",
+                        name, col_map[name])
+        else:
+            logger.info(
+                "[fsp-config] %s (%s) -> reconciled by 121 directly; payments "
+                "on it are not distributed by 121 Scan.",
+                name, fsp_types[name]
+            )
+
+    return col_map, fsp_types
+
+
+def _is_excel_config(config_name, fsp_types, fsp_name=None):
+    """True when this FSP configuration is Excel-based, and therefore
+    reconcilable by 121 Scan's CSV upload.
+
+    Two independent signals, most reliable first:
+      1. integrationType from /fsp-configurations, keyed on configuration name
+      2. fspName carried on the transaction row itself — 121's transaction_view
+         exposes programFspConfigurationName AND fspName per row
+
+    An unrecognised configuration is treated as Excel so that a lookup miss can
+    never silently drop a real beneficiary. The columnToMatch checks downstream
+    are the backstop for that case.
+    """
+    if config_name and config_name in fsp_types:
+        return fsp_types[config_name] == FSP_TYPE_CSV
+    if fsp_name:
+        return fsp_name == FSP_EXCEL
+    return True
+
+
+def payment_fsp_names(program_id, payment):
+    """The programFspConfigurationName(s) a payment covers.
+
+    Prefers the `fsps` array already present on the payments-list payload; falls
+    back to GET /programs/{id}/payments/{paymentId} when the list form does not
+    carry it. Written to work either way so it does not depend on which shape
+    this 121 build returns.
+    """
+    payment_id = payment.get("paymentId")
+    fsps = payment.get("fsps")
+
+    if not isinstance(fsps, list) or not fsps:
+        url = f"{API_BASE}/programs/{program_id}/payments/{payment_id}"
+        r = requests.get(url, cookies=COOKIES, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        fsps = r.json().get("fsps") or []
+
+    names = []
+    for entry in fsps:
+        if isinstance(entry, dict):
+            name = entry.get("programFspConfigurationName")
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def resolve_payment_column(program_id, payment, col_map, names=None):
+    """The columnToMatch for ONE payment, or raise.
+
+    INVARIANT 2: resolution is anchored to the payment, which knows its FSP
+    configuration. There is deliberately no program-level fallback and no
+    global — INVARIANT 5 — because either would reintroduce exactly the class
+    of bug this replaces.
+    """
+    payment_id = payment.get("paymentId")
+    if names is None:
+        names = payment_fsp_names(program_id, payment)
+
+    if not names:
+        _fail(
+            f"paymentId={payment_id} \"{payment.get('name')}\" reports no FSP "
+            "configuration, so its match column cannot be determined."
+        )
+        return None
+
+    unknown = [n for n in names if n not in col_map]
+    if unknown:
+        _fail(
+            f"paymentId={payment_id} \"{payment.get('name')}\" uses FSP "
+            f"configuration(s) {unknown} which have no columnToMatch in 121. "
+            f"Known configurations: {sorted(col_map)}"
+        )
+        return None
+
+    columns = {col_map[n] for n in names}
+
+    if len(columns) > 1:
+        # INVARIANT 4. A single reconciliation CSV has one header, so a payment
+        # spanning configurations that disagree cannot be reconciled at all.
+        # Surface it here rather than silently half-reconciling in the field.
+        _fail(
+            f"paymentId={payment_id} \"{payment.get('name')}\" spans FSP "
+            f"configurations {names} with conflicting columnToMatch values "
+            f"{sorted(columns)}. It cannot be reconciled with one CSV — split "
+            "the payment in 121, or align the configurations."
+        )
+        return None
+
+    column = columns.pop()
+    logger.info(
+        "[match-column] paymentId=%s \"%s\" fsp=%s -> '%s'",
+        payment_id, payment.get("name"), names, column
+    )
+    return column
 
 def fetch_registrations_bulk(program_id, registration_ids):
     """
@@ -698,10 +873,14 @@ def download_cache(program_id, payment_id):
 
     # Resolve the match column ONCE, live from 121, reused for every record
     # and written into the manifest below.
-    match_key = resolve_column_to_match(program_id)
+    col_map, _fsp_types = build_fsp_column_map(program_id)
+    match_key = resolve_payment_column(
+        program_id, {"paymentId": payment_id, "name": f"Payment {payment_id}"}, col_map
+    )
     if not match_key:
-        logger.error("[!] Could not resolve columnToMatch for program %s — "
-                     "offline payments will not be matchable.", program_id)
+        raise IncompleteSyncError(
+            f"Could not resolve columnToMatch for paymentId {payment_id}."
+        )
 
     transactions = get_transactions(program_id, payment_id)
     cache_data = []
@@ -737,6 +916,8 @@ def download_cache(program_id, payment_id):
         filtered_data = {key: reg.get(key) for key in FIELD_KEYS}
         if match_key:
             filtered_data[match_key] = reg.get(match_key)
+        if LOOKUP_FIELD != "referenceId":
+            filtered_data[LOOKUP_FIELD] = reg.get(LOOKUP_FIELD)
 
         encrypted_data = encrypt_data(filtered_data)
 
@@ -815,10 +996,10 @@ def download_cache(program_id, payment_id):
 # batch. A payment with waiting transactions whose paymentDate is older than
 # WINDOW_DAYS is skipped entirely. Raise OFFLINE_SYNC_WINDOW_DAYS if a
 # distribution is running long.
-WINDOW_DAYS = int(os.getenv("OFFLINE_SYNC_WINDOW_DAYS", "14"))
+WINDOW_DAYS = int(os.getenv("OFFLINE_SYNC_WINDOW_DAYS", "365"))
 
 
-def select_open_payments(program_id, window_days=WINDOW_DAYS):
+def select_open_payments(program_id, col_map, fsp_types, window_days=WINDOW_DAYS):
     """
     Decide which payments are worth pulling transactions for.
 
@@ -842,6 +1023,8 @@ def select_open_payments(program_id, window_days=WINDOW_DAYS):
     skipped_no_waiting = 0
     skipped_too_old = 0
     skipped_waiting_total = 0
+    skipped_not_excel = []          # payments 121 reconciles itself
+    skipped_not_excel_waiting = 0
 
     for p in payments:
         payment_id = p.get("paymentId", p.get("id"))
@@ -867,7 +1050,43 @@ def select_open_payments(program_id, window_days=WINDOW_DAYS):
             )
             continue
 
-        selected.append({
+        fsp_names = payment_fsp_names(program_id, p)
+        excel_names = [n for n in fsp_names if _is_excel_config(n, fsp_types)]
+
+        # INVARIANT 8. A payment entirely on api-integrated FSPs (Safaricom,
+        # Airtel, MTN, Nedbank, Intersolve, Onafriq, ...) has no columnToMatch
+        # and no CSV to upload: 121 reconciles it itself through the FSP's API.
+        # 121 Scan cannot reconcile it and must not try. SKIP it — this used to
+        # call _fail() and abort the entire sync, taking every Excel payment on
+        # the program down with it.
+        if fsp_names and not excel_names:
+            skipped_not_excel.append({
+                "paymentId": payment_id,
+                "name": p.get("name"),
+                "fspConfigNames": fsp_names,
+                "waitingCount": waiting_count,
+            })
+            skipped_not_excel_waiting += waiting_count
+            logger.info(
+                "[skip] paymentId=%s \"%s\" fsp=%s — reconciled by 121 "
+                "directly, not via 121 Scan. %s waiting transaction(s) "
+                "excluded from this batch.",
+                payment_id, p.get("name"), fsp_names, waiting_count
+            )
+            continue
+
+        if len(excel_names) != len(fsp_names):
+            # Mixed payment: the Excel side is ours, the api side is 121's.
+            # fetch_tranches() filters the individual transactions, because the
+            # FSP configuration lives on the transaction (INVARIANT 9).
+            logger.warning(
+                "[!] paymentId=%s \"%s\" spans Excel and api FSP "
+                "configurations %s. Only the Excel one(s) %s are distributed "
+                "by 121 Scan; the rest stay with 121.",
+                payment_id, p.get("name"), fsp_names, excel_names
+            )
+
+        entry = {
             "paymentId": payment_id,
             # Names are auto-generated by 121 and are NOT guaranteed unique —
             # two payments minutes apart can share a name. The paymentId is the
@@ -877,7 +1096,18 @@ def select_open_payments(program_id, window_days=WINDOW_DAYS):
             "paymentDate": payment_date,
             "waitingCount": waiting_count,
             "isPaymentApproved": p.get("isPaymentApproved"),
-        })
+            # Excel configurations ONLY. The api ones are not ours to reconcile
+            # and must never reach resolve_payment_column(), which would
+            # correctly but uselessly fail on them.
+            "fspConfigNames": excel_names,
+            "allFspConfigNames": fsp_names,
+        }
+        # Resolved once, here, and carried everywhere downstream. Nothing later
+        # in the pipeline re-derives it (INVARIANT 6).
+        entry["columnToMatch"] = resolve_payment_column(
+            program_id, p, col_map, names=entry["fspConfigNames"]
+        )
+        selected.append(entry)
 
     selected.sort(key=lambda x: (str(x.get("paymentDate") or ""), x["paymentId"]))
 
@@ -885,18 +1115,21 @@ def select_open_payments(program_id, window_days=WINDOW_DAYS):
         f"[INFO] {len(selected)} open payment(s) selected "
         f"(skipped: {skipped_no_waiting} with nothing waiting, "
         f"{skipped_too_old} older than {window_days} days "
-        f"holding {skipped_waiting_total} waiting transaction(s))"
+        f"holding {skipped_waiting_total} waiting transaction(s), "
+        f"{len(skipped_not_excel)} on api-integrated FSPs holding "
+        f"{skipped_not_excel_waiting} waiting transaction(s))"
     )
     for p in selected:
         logger.info(
             f"  - paymentId={p['paymentId']} \"{p['name']}\" "
-            f"waiting={p['waitingCount']} date={p.get('paymentDate')}"
+            f"waiting={p['waitingCount']} date={p.get('paymentDate')} "
+            f"fsp={p.get('fspConfigNames')} column='{p.get('columnToMatch')}'"
         )
 
-    return selected
+    return selected, skipped_not_excel
 
 
-def fetch_tranches(program_id, payments):
+def fetch_tranches(program_id, payments, col_map, fsp_types):
     """
     Fetch waiting transactions for each open payment (in parallel) and group them
     by beneficiary.
@@ -930,7 +1163,8 @@ def fetch_tranches(program_id, payments):
             )
             return payment, [], e
 
-    counts = {"total": 0, "not_waiting": 0, "deleted": 0, "missing_ids": 0, "kept": 0}
+    counts = {"total": 0, "not_waiting": 0, "not_excel": 0, "deleted": 0,
+              "missing_ids": 0, "kept": 0}
     fetch_errors = []
 
     max_workers = min(MAX_WORKERS, len(payments)) or 1
@@ -948,12 +1182,12 @@ def fetch_tranches(program_id, payments):
                 "expectedWaiting": payment.get("waitingCount"),
                 "fetchedTotal": len(transactions),
                 "waitingSeen": 0,
+                "notExcel": 0,
                 "deleted": 0,
                 "missingIds": 0,
                 "kept": 0,
                 "error": str(error) if error else None,
             }
-
             for t in transactions:
                 if not isinstance(t, dict):
                     continue
@@ -965,6 +1199,27 @@ def fetch_tranches(program_id, payments):
                     continue
 
                 per_payment["waitingSeen"] += 1
+
+                # INVARIANT 9. The FSP configuration is a property of the
+                # TRANSACTION, not the payment: 121's transaction_view selects
+                # programFspConfigurationName and fspName per row, joined via
+                # the transaction's last event. A payment can therefore mix
+                # Excel and api recipients, and stamping the Excel payment's
+                # column onto an api transaction would reconcile the wrong
+                # person against the wrong field.
+                #
+                # waitingSeen is incremented ABOVE this check on purpose: it is
+                # reconciled against 121's waiting aggregation, which counts api
+                # transactions too. Filtering before counting would turn every
+                # mixed payment into a spurious shortfall.
+                if not _is_excel_config(
+                    t.get("programFspConfigurationName"),
+                    fsp_types,
+                    t.get("fspName"),
+                ):
+                    counts["not_excel"] += 1
+                    per_payment["notExcel"] += 1
+                    continue
 
                 if (t.get("registrationStatus") or "").lower() == "deleted":
                     counts["deleted"] += 1
@@ -992,8 +1247,22 @@ def fetch_tranches(program_id, payments):
                     "amount": _transfer_value(t),
                     "created": t.get("created"),
                     "status": status,
+                    # INVARIANT 6: self-describing. The device reads the column
+                    # off the tranche the FSP selected — it never has to infer
+                    # one for the program.
+                    #
+                    # Resolved from THIS transaction's own FSP configuration
+                    # (INVARIANT 2, one scope finer than before), falling back
+                    # to the payment-level value when 121 reports no
+                    # configuration on the row — possible when the config was
+                    # deleted after the payment was made.
+                    "columnToMatch": (
+                        col_map.get(t.get("programFspConfigurationName"))
+                        or payment.get("columnToMatch")
+                    ),
+                    "fspConfigName": t.get("programFspConfigurationName"),
+                    "fspConfigNames": payment.get("fspConfigNames"),
                 }
-
                 # One tranche per (uuid, paymentId) — matches the compound
                 # IndexedDB key on the client. If 121 ever returns more than one
                 # transaction for the same pair, keep the most recent.
@@ -1019,9 +1288,9 @@ def fetch_tranches(program_id, payments):
         expected = r["expectedWaiting"]
         logger.info(
             "[INFO] paymentId=%s: expected waiting=%s, waiting received=%s, "
-            "kept=%s (deleted=%s, missingIds=%s)",
+            "kept=%s (notExcel=%s, deleted=%s, missingIds=%s)",
             r["paymentId"], expected, r["waitingSeen"], r["kept"],
-            r["deleted"], r["missingIds"],
+            r["notExcel"], r["deleted"], r["missingIds"],
         )
         if r["error"]:
             shortfalls.append(
@@ -1032,6 +1301,22 @@ def fetch_tranches(program_id, payments):
                 f"paymentId={r['paymentId']}: received {r['waitingSeen']} waiting "
                 f"transaction(s) but 121 reports {expected}"
             )
+
+    # Backstop for a tranche that passed the Excel filter but still has no
+    # column — e.g. its FSP configuration was deleted in 121 after the payment
+    # was made, so neither the transaction nor the payment could supply one.
+    # Reconciling it is impossible, so refuse rather than ship it.
+    uncolumned = [
+        (tr["uuid"], tr["paymentId"], tr.get("fspConfigName"))
+        for by_payment in tranches_by_uuid.values()
+        for tr in by_payment.values()
+        if not tr.get("columnToMatch")
+    ]
+    if uncolumned:
+        shortfalls.append(
+            f"{len(uncolumned)} tranche(s) have no columnToMatch and cannot be "
+            f"reconciled, e.g. {uncolumned[:5]}"
+        )
 
     if shortfalls:
         _fail(
@@ -1078,20 +1363,20 @@ def download_open_payments_cache(program_id):
     batch_dir = get_next_batch_dir(base_path, "recent")
     photos_dir = os.path.join(batch_dir, "photos")
 
-    # Resolve the match column ONCE, live from 121, and record it in the
-    # manifest so the client never has to guess.
-    match_key = resolve_column_to_match(program_id)
-    if not match_key:
-        logger.error("[!] Could not resolve columnToMatch for program %s — "
-                     "offline payments will not be matchable.", program_id)
+    # columnToMatch is per FSP configuration, reached via the payment — never
+    # per program. Build the name->column map once, then resolve each payment
+    # against it inside select_open_payments().
+    col_map, fsp_types = build_fsp_column_map(program_id)
 
     # 1) + 2) + 3)
-    open_payments = select_open_payments(program_id)
+    open_payments, skipped_non_excel = select_open_payments(
+        program_id, col_map, fsp_types
+    )
     if not open_payments:
         logger.warning("[!] No open payments for program %s — nothing to cache.", program_id)
 
     tranches_by_uuid, reg_id_by_uuid, reconciliation = fetch_tranches(
-        program_id, open_payments
+        program_id, open_payments, col_map, fsp_types
     )
 
     if not tranches_by_uuid:
@@ -1105,6 +1390,9 @@ def download_open_payments_cache(program_id):
     cache_data = []
     all_tranches = []
     missing_registration_uuids = []
+    missing_match_values = []   # [(uuid, column)]
+    lookup_values = defaultdict(list)   # normalised value -> [uuid, ...]
+    lookup_blank = []                   # uuids with no lookup value at all
 
     for uuid, tranches in tranches_by_uuid.items():
         reg_id = reg_id_by_uuid.get(uuid)
@@ -1115,8 +1403,32 @@ def download_open_payments_cache(program_id):
             continue
 
         filtered_data = {key: reg.get(key) for key in FIELD_KEYS}
-        if match_key:
-            filtered_data[match_key] = reg.get(match_key)
+
+        # The configured lookup attribute. Cached even when it is not one of the
+        # displayed fields — the scan box needs it, the beneficiary screen only
+        # renders what display config lists, so nothing extra appears on screen.
+        if LOOKUP_FIELD != "referenceId":
+            lookup_raw = reg.get(LOOKUP_FIELD)
+            filtered_data[LOOKUP_FIELD] = lookup_raw
+            lookup_clean = str(lookup_raw or "").strip()
+            if lookup_clean:
+                lookup_values[lookup_clean.lower()].append(uuid)
+            else:
+                lookup_blank.append(uuid)
+
+        # The union of columns this beneficiary's tranches need — they may sit
+        # on different FSP configurations within the same program.
+        match_cols = {t["columnToMatch"] for t in tranches if t.get("columnToMatch")}
+        for col in match_cols:
+            raw = reg.get(col)
+            filtered_data[col] = raw
+            # encrypt_data() casts None to "" and encrypts it, producing a valid
+            # Fernet token that decrypts to empty. Once encrypted, "no value" is
+            # indistinguishable from a real one and the device only finds out
+            # mid-distribution. Catch it here, while it is still fixable.
+            if not str(raw or "").strip():
+                missing_match_values.append((uuid, col))
+
         encrypted_data = encrypt_data(filtered_data)
 
         first = tranches[0]
@@ -1166,6 +1478,43 @@ def download_open_payments_cache(program_id):
             f"{expected_beneficiaries}."
         )
 
+    if missing_match_values:
+        by_col = defaultdict(list)
+        for uuid, col in missing_match_values:
+            by_col[col].append(uuid)
+        detail = "; ".join(
+            f"'{col}': {len(ids)} beneficiar(y/ies) e.g. {ids[:5]}"
+            for col, ids in sorted(by_col.items())
+        )
+        _fail(
+            "Some beneficiaries have no value for their payment's match column "
+            f"in 121, so their payments could not be reconciled — {detail}"
+        )
+    # --- lookup-field health check -------------------------------------
+    # Deliberately NOT _fail(): every person here is still findable by their
+    # reference ID, and scan.html refuses to resolve an ambiguous lookup value
+    # rather than guessing. This is a data-quality signal, not a broken batch.
+    lookup_duplicates = {v: ids for v, ids in lookup_values.items() if len(ids) > 1}
+    if LOOKUP_FIELD != "referenceId":
+        if lookup_duplicates:
+            affected = sum(len(ids) for ids in lookup_duplicates.values())
+            logger.warning(
+                "[!] Lookup field '%s' is NOT unique in this batch: %s value(s) "
+                "shared by %s beneficiar(y/ies). Those people can only be found "
+                "by reference ID. Fix the duplicates in 121.",
+                LOOKUP_FIELD, len(lookup_duplicates), affected,
+            )
+        if lookup_blank:
+            logger.warning(
+                "[!] %s beneficiar(y/ies) have no value for lookup field '%s' "
+                "and cannot be found by it (e.g. %s).",
+                len(lookup_blank), LOOKUP_FIELD, lookup_blank[:5],
+            )
+        if not lookup_duplicates and not lookup_blank:
+            logger.info(
+                "[INFO] Lookup field '%s': unique and populated across all %s "
+                "beneficiar(y/ies).", LOOKUP_FIELD, len(cache_data),
+            )
     # 6) Download & encrypt photos in parallel (one per beneficiary)
     photo_failures = download_photos_bulk(cache_data, photos_dir)
 
@@ -1179,11 +1528,35 @@ def download_open_payments_cache(program_id):
     with open(tx_path, "w", encoding="utf-8") as f:
         json.dump(all_tranches, f, indent=2)
 
+    # Per-payment map is the authoritative artifact now. The scalar
+    # "columnToMatch" is kept ONLY so a device still running the old client can
+    # read something sane; it is populated only when every payment in the batch
+    # agrees, and is otherwise null rather than an arbitrary pick.
+    column_by_payment = {
+        str(p["paymentId"]): p.get("columnToMatch")
+        for p in open_payments
+        if p.get("columnToMatch")
+    }
+    _distinct_columns = set(column_by_payment.values())
+    _legacy_column = (
+        next(iter(_distinct_columns)) if len(_distinct_columns) == 1 else None
+    )
+
     batch_info = {
         "batchType": "payment-recent",
         "multiPayment": True,
         "programId": program_id,
-        "columnToMatch": match_key,
+        "columnToMatch": _legacy_column,
+        "columnToMatchByPayment": column_by_payment,
+        "fspColumnMap": col_map,
+        # INVARIANT 6, applied to the skip: whoever reads this manifest can see
+        # exactly which payments 121 Scan declined to distribute, and why,
+        # without re-deriving it from 121.
+        "fspTypes": fsp_types,
+        "skippedNonExcelPayments": skipped_non_excel,
+        "nonExcelTransactionsExcluded": sum(
+            r.get("notExcel", 0) for r in reconciliation
+        ),
         "dataEncrypted": True,
         "encryptionScheme": "fernet-v1",
         "windowDays": WINDOW_DAYS,
@@ -1195,10 +1568,20 @@ def download_open_payments_cache(program_id):
         "expectedTrancheCount": expected_tranches,
         "registrationFetchFailures": len(failed_reg_ids),
         "photoFailures": len(photo_failures),
+        "missingMatchValues": len(missing_match_values),
+        # Lookup-field evidence. Deliberately NOT part of "complete" below: a
+        # non-unique or partly-blank lookup field does not make the batch
+        # incomplete — everyone in it is still findable by reference ID.
+        "lookupField": LOOKUP_FIELD,
+        "lookupBlankCount": len(lookup_blank),
+        "lookupDuplicateValueCount": len(lookup_duplicates),
+        "lookupDuplicateAffected": sum(len(ids) for ids in lookup_duplicates.values()),
         "complete": (
             len(cache_data) == expected_beneficiaries
             and len(all_tranches) == expected_tranches
             and not failed_reg_ids
+            and not missing_match_values
+            and all(p.get("columnToMatch") for p in open_payments)
         ),
         "reconciliation": reconciliation,
         "payments": [

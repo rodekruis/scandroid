@@ -42,7 +42,7 @@
     .btn { padding:13px 14px; border-radius:12px; border:1px solid var(--line); background:#f9fafb; cursor:pointer; font-weight:700; font-size:15px; transition:opacity 0.15s; }
     .btn:active { opacity:0.75; }
     .btn-approve { background:#e8f9ef; border-color:#bfe9cf; color:#065f46; }
-    .btn-reject  { background:#fdecec; border-color:#f7c5c5; color:#7f1d1d; }
+    .btn-reject  { background:#fef3c7; border-color:#fcd34d; color:#92400e; }
     .decision-note { font-size:13px; color:var(--muted); margin-top:8px; text-align:center; }
     .amount-block { background:#f8fafc; border:1px solid var(--line); border-radius:12px; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
     .amount-label { color:var(--muted); font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; }
@@ -206,6 +206,32 @@
     const COLUMN_TO_MATCH="{{ column_to_match }}";
     const PROGRAM_CURRENCY="{{ program_currency or '' }}";
     const t_enter_value="{{ t.enter_value or 'Enter value' }}";
+    const RO_NOTE="{{ t.verify_only_note or 'Verification only — your account cannot record payments.' }}";
+    const RO_CONTINUE_LABEL="{{ t.scan_next or 'Scan next beneficiary' }}";
+    // Whether this operator may push changes to 121. NOT a template value:
+    // this page is precached and served cacheFirst, so anything Jinja put here
+    // would be frozen at precache time and shared between users on a shared
+    // tablet. It is read from IndexedDB meta in loadPage(), written by
+    // fsp_admin.html on every load. Defaults to true so a device that has
+    // never stored it behaves exactly as before (the server is the real gate).
+    let CAN_EDIT_FIELDS = true;
+
+    // Whether this operator may record a payment at all. Same tri-state source
+    // as CAN_EDIT_FIELDS — written by fsp_admin.html on every load — but read
+    // from canUpdatePayments ONLY. canEditFields also requires the two
+    // registration permissions, so an operator who may reconcile payments but
+    // not update registrations must NOT lose the Approve button.
+    //
+    // When this is false the Approve button is REMOVED. A read-only operator's
+    // approval would otherwise sit in the local 'payments' store as
+    // status:'success', and the next operator to log in on the same tablet
+    // would find it in "Payments ready to send" and submit it under their own
+    // token — a payment nobody with the authority to make it ever approved.
+    // Nothing in the payments store records who created a row.
+    //
+    // Defaults to true so a device that has never stored the flag behaves
+    // exactly as it does today.
+    let CAN_RECORD_PAYMENT = true;
 
     function renderFields(container,data,keyB64){
       container.innerHTML="";
@@ -213,6 +239,11 @@
       if(!rows.length){container.innerHTML='<div class="note">No fields configured.</div>';return;}
       for(const f of rows){
         const fk=f.key||f.name||f.field; if(!fk)continue;
+        // Cannot push edits to 121: the field is dropped from the screen
+        // completely — label and value both. Showing it read-only would only
+        // invite "why can't I type in this?", and showing it editable would
+        // collect a value that 121 will reject at Send.
+        if(f.editable && !CAN_EDIT_FIELDS) continue;
         const label=(f.labels&&(f.labels[LANG]||f.labels.en))||fk;
         const hasVal=data&&Object.prototype.hasOwnProperty.call(data,fk);
         const raw=hasVal?data[fk]:"";
@@ -238,7 +269,24 @@
         row.appendChild(lab); row.appendChild(v); container.appendChild(row);
       }
     }
-
+    // Verification-only mode: this operator can look a beneficiary up and
+    // confirm their identity from the photo and fields, but cannot record a
+    // payment decision. Approve is removed from the DOM; Skip stays, because it
+    // writes nothing and is how they move to the next person.
+    function applyVerifyOnlyMode(){
+      const approve=document.getElementById('approveBtn');
+      if(approve)approve.remove();
+      // The actions row is a 2-column grid; with one button left it should
+      // fill the width rather than sit in a half-empty row.
+      const actions=document.querySelector('.actions');
+      if(actions)actions.style.gridTemplateColumns='1fr';
+      // "Skip" only makes sense next to "Approve". On its own it is just
+      // "next person".
+      const reject=document.getElementById('rejectBtn');
+      if(reject)reject.textContent=RO_CONTINUE_LABEL;
+      const note=document.getElementById('decisionNote');
+      if(note)note.textContent=RO_NOTE;
+    }
     async function loadPage(){
       const fieldsEl=document.getElementById('fields');
       const photoMsg=document.getElementById('photoMsg');
@@ -253,6 +301,22 @@
         const sc=await dbGet(db,'meta','displayConfig');
         if(sc&&sc.value){const cfg=sc.value,pc=cfg.programs?(cfg.programs[ACTIVE_PROGRAM_ID]||cfg):cfg; if(Array.isArray(pc.fields)&&pc.fields.length)fieldsConfig=pc.fields; if(pc.photo!==undefined)photoEnabled=!!pc.photo.enabled;}
       }catch(e){console.warn('displayConfig load failed:',e);}
+      // Only a definite `false` removes the editable fields — anything else
+      // (missing key, unreadable store) leaves the page as it is today.
+      // Falls back to the older canUpdatePayments key so a device that has not
+      // yet reloaded /fsp-admin since this deploy still behaves correctly.
+      try{
+        let perm=await dbGet(db,'meta',`canEditFields:${ACTIVE_PROGRAM_ID}`);
+        if(!perm)perm=await dbGet(db,'meta',`canUpdatePayments:${ACTIVE_PROGRAM_ID}`);
+        if(perm&&perm.value===false)CAN_EDIT_FIELDS=false;
+      }catch(e){console.warn('field-edit permission load failed:',e);}
+      // Separate question, separate key — see CAN_RECORD_PAYMENT above.
+      // Applied before loadPayments() so nothing can re-show the button.
+      try{
+        const pp=await dbGet(db,'meta',`canUpdatePayments:${ACTIVE_PROGRAM_ID}`);
+        if(pp&&pp.value===false)CAN_RECORD_PAYMENT=false;
+      }catch(e){console.warn('payment permission load failed:',e);}
+      if(!CAN_RECORD_PAYMENT)applyVerifyOnlyMode();
       let rec=await dbGet(db,'records',scopedUUID(String(SCANNED_ID)));
       if(!rec){const idx=await dbGet(db,'meta','idIndex');const map=idx&&idx.value||{};const n=String(SCANNED_ID);const mu=map['uuid:'+n]||map['kobo:'+n]||map['reg:'+n];if(mu)rec=await dbGet(db,'records',scopedUUID(mu));}
       if(!rec)rec=await dbFindRecordByAnyId(db,SCANNED_ID);
@@ -321,20 +385,61 @@
       return d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'});
     }
 
+
+    // Resolve the match column + value for ONE selected tranche.
+    // Resolution order is strict, most-specific first:
+    //   1. the tranche itself (current bundles)
+    //   2. the per-payment map stashed at sync (older tranche rows)
+    //   3. the legacy program-wide scalar (bundles synced before this change)
+    // There is deliberately no hardcoded default: guessing 'phoneNumber' is
+    // what silently reconciled against the wrong column.
+    async function applySelection(db, rec, t){
+      SELECTED_PAYMENT_ID=t.paymentId??null;
+      SELECTED_PAYMENT_NAME=t.paymentName||null;
+      SELECTED_AMOUNT=t.amount??null;
+
+      MATCH_COL=t.columnToMatch||null;
+      if(!MATCH_COL){
+        try{
+          const m=await dbGet(db,'meta',`columnToMatchByPayment:${ACTIVE_PROGRAM_ID}`);
+          if(m&&m.value) MATCH_COL=m.value[String(t.paymentId)]||null;
+        }catch(e){}
+      }
+      // NO legacy program-wide fallback. The only value it could return is a
+      // single scalar for the whole program, which is wrong by construction on
+      // any program with more than one FSP configuration — and on a device that
+      // has not re-synced it returns the exact stale column this redesign
+      // removed. If neither the tranche nor the per-payment map can answer, the
+      // device is on an old bundle and must sync; savePaymentDecision() says so.
+
+      MATCH_VALUE='';
+      if(MATCH_COL){
+        const rawVal=rec.data?.[MATCH_COL]||'';
+        MATCH_VALUE=rawVal;
+        if(looksEncrypted(rawVal)&&SERVER_FERNET_KEY){
+          try{ MATCH_VALUE=await fernetDecryptString(rawVal,SERVER_FERNET_KEY); }
+          catch(e){ console.warn('match value decryption failed',e); MATCH_VALUE=''; }
+        }
+        // An encrypted empty string decrypts cleanly to "" — a valid token with
+        // no value behind it. Treat that as missing.
+        if(typeof MATCH_VALUE==='string') MATCH_VALUE=MATCH_VALUE.trim();
+      }
+
+      console.info(`[match] payment ${t.paymentId} -> column '${MATCH_COL}' `+
+                   `value ${MATCH_VALUE?'present':'MISSING'}`);
+    }
+
+
     async function loadPayments(db, rec){
       const approveBtn=document.getElementById('approveBtn');
       const rejectBtn=document.getElementById('rejectBtn');
       const note=document.getElementById('decisionNote');
       const scoped=rec.uuid;
 
-      // Resolve the match column + value once, used by every decision.
-      MATCH_COL=COLUMN_TO_MATCH;
-      try{ const stored=await dbGet(db,'meta',`columnToMatch:${ACTIVE_PROGRAM_ID}`); if(stored&&stored.value) MATCH_COL=stored.value; }catch(e){}
-      if(!MATCH_COL) MATCH_COL='phoneNumber';
-      let rawVal=rec.data?.[MATCH_COL]||'';
-      MATCH_VALUE=rawVal;
-      if(looksEncrypted(rawVal)&&SERVER_FERNET_KEY){try{MATCH_VALUE=await fernetDecryptString(rawVal,SERVER_FERNET_KEY);}catch(e){}}
-
+      // The match column is a property of the payment's FSP configuration, so
+      // it is resolved per selected tranche in applySelection() — NOT once for
+      // the program. A program can run several FSP configurations at the same
+      // time with different columns.
       // Gather this beneficiary's tranches and the ones already collected.
       let tranches=[], paid=[];
       try{ tranches=await getAllByIndexKeyPrefix(db,'transaction',scoped); }catch(e){console.warn('tranche load failed',e);}
@@ -364,7 +469,12 @@
         // Everything already collected — nothing to distribute.
         selectSection.classList.add('hidden');
         amountBlock.classList.add('hidden');
-        approveBtn.disabled=true; rejectBtn.disabled=true;
+        // Null-guarded: applyVerifyOnlyMode() removes approveBtn from the DOM
+        // before this runs. Reject stays enabled in verification-only mode —
+        // there it reads "Scan next beneficiary" and is the ONLY way forward,
+        // so disabling it would strand the operator on this screen.
+        if(approveBtn)approveBtn.disabled=true;
+        if(rejectBtn&&CAN_RECORD_PAYMENT)rejectBtn.disabled=true;
         note.textContent='✅ '+( "{{ t.all_collected or 'All payments for this beneficiary have already been collected.' }}");
         return;
       }
@@ -372,9 +482,7 @@
       if(open.length===1){
         // Single open tranche — no selection friction, show the amount block.
         const only=open[0];
-        SELECTED_PAYMENT_ID=only.paymentId??null;
-        SELECTED_PAYMENT_NAME=only.paymentName||null;
-        SELECTED_AMOUNT=only.amount??null;
+        await applySelection(db, rec, only);
         amountBlock.classList.remove('hidden');
         document.getElementById('amountValue').textContent=fmtAmount(only.amount);
         // Name the payment even when there's only one, so the FSP always knows
@@ -388,7 +496,7 @@
       // Multiple open tranches — render the selector.
       multiNote.style.display='';
       selectSection.classList.remove('hidden');
-      approveBtn.disabled=true; // require a selection first
+      if(approveBtn)approveBtn.disabled=true; // require a selection first (absent in verify-only mode)
       listEl.innerHTML='';
       // Oldest payment first, matching the order the sync wrote them in.
       open.sort((a,b)=>String(a.paymentDate||a.created||'').localeCompare(String(b.paymentDate||b.created||''))
@@ -412,17 +520,15 @@
         opt.querySelector('.pay-title').textContent=label;
         opt.querySelector('.pay-meta').textContent=meta;
         opt.querySelector('.pay-amount').textContent=fmtAmount(t.amount);
-        opt.addEventListener('click',()=>{
-          SELECTED_PAYMENT_ID=t.paymentId??null;
-          SELECTED_PAYMENT_NAME=t.paymentName||null;
-          SELECTED_AMOUNT=t.amount??null;
+        opt.addEventListener('click',async ()=>{
+          await applySelection(db, rec, t);
           [...listEl.children].forEach(c=>c.classList.remove('selected'));
           opt.classList.add('selected');
           const sl=document.getElementById('selectedLine');
           sl.textContent=`{{ t.selected or 'Selected' }}: ${label}`+
             (t.paymentId!=null?` (#${t.paymentId})`:'')+` — ${fmtAmount(t.amount)}`;
           sl.classList.remove('hidden');
-          approveBtn.disabled=false;
+          if(approveBtn)approveBtn.disabled=false;
         });
         listEl.appendChild(opt);
       });
@@ -430,16 +536,56 @@
 
     async function savePaymentDecision(decisionValue){
       const note=document.getElementById('decisionNote');
+      // Defence in depth: the button is gone, but a stale listener, a bfcache
+      // restore or the console must not be able to write a payment row this
+      // operator is not allowed to make.
+      if(decisionValue==='success' && !CAN_RECORD_PAYMENT){
+        note.textContent=RO_NOTE;
+        return;
+      }
       if(decisionValue==='success' && SELECTED_PAYMENT_ID===null){
         note.textContent='⚠️ Please select a payment first.';
         return;
       }
       try{
         const db=await openDB();
+
+        // Re-read rather than trusting the page-load value. The Approve
+        // listener is attached before loadPage()'s permission read completes,
+        // so a tap in that window would otherwise be evaluated against the
+        // default (true) and write the row we are trying to prevent.
+        if(decisionValue==='success'){
+          try{
+            const pp=await dbGet(db,'meta',`canUpdatePayments:${ACTIVE_PROGRAM_ID}`);
+            if(pp&&pp.value===false){
+              CAN_RECORD_PAYMENT=false;
+              applyVerifyOnlyMode();
+              note.textContent=RO_NOTE;
+              return;
+            }
+          }catch(e){console.warn('payment permission re-check failed:',e);}
+        }
+
         const rec=await dbFindRecordByAnyId(db,SCANNED_ID);
         if(!rec){alert("No matching record found.");return;}
+        if(!MATCH_COL){
+          alert(
+            `The matching field for this payment is unknown on this device, so ` +
+            `the payment cannot be reconciled in 121.\n\n` +
+            `Sync from the FSP admin page while online, then try again.`
+          );
+          return;
+        }
         if(!MATCH_VALUE){
-          alert(`Cannot find value for column "${MATCH_COL}". Please re-sync from the FSP admin page and try again.`);
+          // Re-syncing does NOT fix this: the bundle would be rebuilt with the
+          // same empty value. Name the field so it can be corrected in 121.
+          alert(
+            `This beneficiary has no value for "${MATCH_COL}", the matching ` +
+            `field used by this payment, so it cannot be reconciled in 121.\n\n` +
+            `Reference: ${rec.uuid}\nPayment: ${SELECTED_PAYMENT_ID}\n\n` +
+            `An administrator must set "${MATCH_COL}" on this registration in ` +
+            `121. Re-syncing will not fix it.`
+          );
           return;
         }
         // Collect any editable field values the FSP typed in. Only non-empty
@@ -480,7 +626,12 @@
 
     document.addEventListener('DOMContentLoaded',()=>{
       loadPage();
-      document.getElementById("approveBtn").addEventListener("click",()=>savePaymentDecision("success"));
+      // Null-guarded for safety: loadPage() yields at its first await before
+      // applyVerifyOnlyMode() can run, so the button is still here today — but
+      // that ordering must not be load-bearing. If it ever changed, an
+      // unguarded call here would throw and take the Reject listener with it.
+      const _approve=document.getElementById("approveBtn");
+      if(_approve)_approve.addEventListener("click",()=>savePaymentDecision("success"));
       document.getElementById("rejectBtn").addEventListener("click",()=>{window.location.href=`/success-offline?lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;});
     });
 </script>

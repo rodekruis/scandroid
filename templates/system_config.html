@@ -317,6 +317,7 @@
             <select id="KOBO_SERVER" name="KOBO_SERVER">
               <option value="https://kobo.ifrc.org" {% if config.get('KOBO_SERVER') == 'https://kobo.ifrc.org' %}selected{% endif %}>IFRC — kobo.ifrc.org</option>
               <option value="https://kf.kobotoolbox.org" {% if config.get('KOBO_SERVER') == 'https://kf.kobotoolbox.org' %}selected{% endif %}>KoboToolbox — kf.kobotoolbox.org</option>
+              <option value="https://eu.kobotoolbox.org" {% if config.get('KOBO_SERVER') == 'https://eu.kobotoolbox.org' %}selected{% endif %}>KoboToolbox EU — eu.kobotoolbox.org</option>
             </select>
 
             <label for="KOBO_TOKEN">{{ t.kobo_api_token | default('API token') }}</label>

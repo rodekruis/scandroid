@@ -341,6 +341,21 @@
       cursor: not-allowed;
     }
 
+    /* Live feedback for the progressive code lookup. Colour carries meaning
+       (waiting / ready / no match) but the text says it too, so it still reads
+       correctly in greyscale or for a colour-blind operator. */
+    .manual-hint {
+      margin-top: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.35;
+      min-height: 18px;
+      color: var(--muted);
+    }
+    .manual-hint.is-ready { color: #047857; }
+    .manual-hint.is-wait  { color: #b45309; }
+    .manual-hint.is-none  { color: #b91c1c; }
+
     /* ---------- FOOTER ---------- */
     footer {
       background-color: var(--navy);
@@ -511,6 +526,8 @@
             {{ t.manual_submit or "Go" }}
           </button>
         </div>
+        <!-- Live match count for the progressive lookup (see MIN_PREFIX below) -->
+        <div class="manual-hint" id="manualHint" role="status" aria-live="polite"></div>
       </div>
 
     </div>
@@ -534,7 +551,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const startBtn = document.getElementById('startBtn');
     const lang = "{{ lang }}";
     const PROGRAM_ID = "{{ program_id }}";
-
+    // Fallback only. Preferred source is IndexedDB meta.encryptionKey — this
+    // page is precached cacheFirst, so a Jinja value here freezes at precache
+    // time and would go stale if the key were rotated.
+    const SERVER_FERNET_KEY = "{{ fernet_key or '' }}";
     const TXT = {
       requesting: "{{ t.requesting_camera or 'Requesting camera… If prompted, tap Allow.' }}",
       denied: "{{ t.camera_denied or 'Camera permission denied or not available.' }}",
@@ -544,7 +564,12 @@ document.addEventListener("DOMContentLoaded", () => {
       no_read_hint: "{{ t.no_read_hint or 'This QR code can’t be read — it may be blurred, faded or low quality. Enter the Reference ID printed below the QR code using the box below.' }}",
       decoder_unavailable: "{{ t.decoder_unavailable or 'The scanner could not start on this device. Enter the Reference ID printed below the QR code using the box below.' }}",
       no_read_banner: "{{ t.no_read_banner or 'Can’t read this QR code' }}",
-      no_read_banner_sub: "{{ t.no_read_banner_sub or 'Type the Reference ID printed under the QR code into the box below.' }}"
+      no_read_banner_sub: "{{ t.no_read_banner_sub or 'Type the Reference ID printed under the QR code into the box below.' }}",
+      lookup_min: "{{ t.lookup_min or 'Type at least {n} characters of the code.' }}",
+      lookup_many: "{{ t.lookup_many or '{n} possible matches — keep typing.' }}",
+      lookup_one: "{{ t.lookup_one or 'One match found — press Go.' }}",
+      lookup_none: "{{ t.lookup_none or 'No match in the saved records. Check the code.' }}",
+      lookup_duplicate: "{{ t.lookup_duplicate or '{n} people share this value — use the Reference ID instead.' }}"
     };
 
     let stream = null;
@@ -555,7 +580,25 @@ document.addEventListener("DOMContentLoaded", () => {
     const setStatus = (m) => {
       if (statusEl) statusEl.textContent = m;
     };
-
+    /* ---------- FERNET (identical to beneficiary_offline.html) ---------- */
+    const b64u = {
+      toBytes(s){ s=String(s||'').replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; const bin=atob(s); const out=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i); return out; }
+    };
+    function concat(...arrs){ let len=0; for(const a of arrs)len+=a.length; const out=new Uint8Array(len); let o=0; for(const a of arrs){out.set(a,o);o+=a.length;} return out; }
+    const importHmacKey = (raw) => crypto.subtle.importKey('raw', raw, {name:'HMAC',hash:'SHA-256'}, false, ['verify']);
+    const importAesKey  = (raw) => crypto.subtle.importKey('raw', raw, {name:'AES-CBC'}, false, ['decrypt']);
+    function looksEncrypted(v){ return typeof v === 'string' && v.startsWith('gAAAA'); }
+    async function fernetDecryptString(token, keyB64) {
+      const key = b64u.toBytes(keyB64); if (key.length !== 32) throw new Error('Key must be 32 bytes');
+      const signing = key.slice(0,16), encrypt = key.slice(16,32), raw = b64u.toBytes(token);
+      if (raw.length < 1+8+16+32) throw new Error('Token too short');
+      if (raw[0] !== 0x80) throw new Error('Bad version');
+      const ts = raw.slice(1,9), iv = raw.slice(9,25), mac = raw.slice(raw.length-32), ct = raw.slice(25, raw.length-32);
+      const hmacKey = await importHmacKey(signing);
+      if (!await crypto.subtle.verify('HMAC', hmacKey, mac, concat(new Uint8Array([0x80]), ts, iv, ct))) throw new Error('HMAC failed');
+      const aesKey = await importAesKey(encrypt);
+      return new TextDecoder().decode(new Uint8Array(await crypto.subtle.decrypt({name:'AES-CBC', iv}, aesKey, ct)));
+    }
     /* ---------- DB HELPERS ---------- */
 
     async function dbFindRecordByAnyId(db, scannedId) {
@@ -869,6 +912,248 @@ document.addEventListener("DOMContentLoaded", () => {
     const manualEntryBox   = document.getElementById('manualEntryBox');
     const manualCodeInput  = document.getElementById('manualCodeInput');
     const manualSubmitBtn  = document.getElementById('manualSubmitBtn');
+    const manualHint       = document.getElementById('manualHint');
+
+    /* ---------- PROGRESSIVE CODE LOOKUP ----------
+     *
+     * Operators find the full Kobo UUID too long to retype, so the box also
+     * accepts the FIRST PART of it and narrows as they type. Two conditions
+     * must BOTH hold before Go unlocks:
+     *
+     *   1. at least MIN_PREFIX characters entered, AND
+     *   2. exactly one saved record whose UUID starts with them.
+     *
+     * Uniqueness alone is not safe. A hex UUID has no check digit, so a
+     * mistyped character does not fail — it silently resolves to a different
+     * record. On a small caseload one or two characters can already be
+     * "unique", which would hand the operator the wrong person. The minimum
+     * length is what closes that gap; the photo check on the next page remains
+     * the final backstop.
+     *
+     * Prefix matching applies to the UUID ONLY. Reference IDs and Kobo IDs are
+     * short and often share a structured prefix, so partial matching on those
+     * would produce phantom ambiguity. They are still accepted in full, as an
+     * exact match, exactly as before this change.
+     *
+     * Everything happens against the records already cached in IndexedDB, so
+     * this works fully offline and adds no server call.
+     */
+    const MIN_PREFIX = 6;
+
+    // null = not loaded yet. [] = nothing cached, in which case we fall back to
+    // the previous behaviour (accept anything and let routing decide) rather
+    // than locking the operator out of the box entirely.
+    let candidates = null;
+
+    // The configured lookup field for THIS program, read from IndexedDB (not
+    // Jinja — see the SERVER_FERNET_KEY note above). Null means reference ID
+    // only, i.e. the behaviour before this feature existed.
+    let LOOKUP_FIELD = null;
+    let LOOKUP_LABEL = '';
+
+    function dbGetMeta(db, key) {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains("meta")) { resolve(null); return; }
+        try {
+          const r = db.transaction("meta", "readonly").objectStore("meta").get(key);
+          r.onsuccess = () => resolve(r.result?.value ?? null);
+          r.onerror = () => resolve(null);
+        } catch { resolve(null); }
+      });
+    }
+
+    async function loadCandidates() {
+      const db = await new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open("scandroid"); } catch { resolve(null); return; }
+        req.onerror = () => resolve(null);
+        req.onsuccess = () => resolve(req.result);
+      });
+      if (!db) return [];
+
+      // ---- which field, and can we read it? ----
+      let keyB64 = SERVER_FERNET_KEY;
+      try {
+        const stored = await dbGetMeta(db, "encryptionKey");
+        if (stored) keyB64 = stored;      // survives a key rotation; see above
+      } catch {}
+
+      try {
+        const cfg = await dbGetMeta(db, "displayConfig");
+        const pc = cfg?.programs?.[PROGRAM_ID] || {};
+        const field = pc.lookup?.field || 'referenceId';
+        if (field && field !== 'referenceId') {
+          LOOKUP_FIELD = field;
+          const match = (pc.fields || []).find(f => (f.key || f.name || f.field) === field);
+          LOOKUP_LABEL = (match?.labels?.[lang] || match?.labels?.en) || field;
+        }
+      } catch (e) { console.warn('[lookup] config read failed', e); }
+
+      if (LOOKUP_FIELD && !keyB64) {
+        // Without the key the alternative field cannot be read at all. Say so
+        // in the console and fall back to reference ID rather than silently
+        // matching nothing.
+        console.warn('[lookup] no Fernet key available — falling back to reference ID');
+        LOOKUP_FIELD = null;
+      }
+
+      // ---- build the candidate list ----
+      if (!db.objectStoreNames.contains("records")) return [];
+      const rows = await new Promise((resolve) => {
+        try {
+          const g = db.transaction("records", "readonly").objectStore("records").getAll();
+          g.onsuccess = () => resolve(g.result || []);
+          g.onerror = () => resolve([]);
+        } catch { resolve([]); }
+      });
+
+      const out = [];
+      for (const r of rows) {
+        if (!r) continue;
+        const full = String(r.uuid || "");
+        if (!full) continue;
+
+        // Records are keyed "<programId>:<uuid>". Only count this program's
+        // people (plus legacy unscoped records) — another program's caseload
+        // must not affect the match count.
+        let raw = full;
+        if (PROGRAM_ID) {
+          if (full.startsWith(PROGRAM_ID + ':')) {
+            raw = full.slice(PROGRAM_ID.length + 1);
+          } else if (full.includes(':')) {
+            continue;
+          }
+        }
+
+        // The lookup value lives Fernet-encrypted in rec.data, put there by
+        // offline_sync.py. Decrypting the whole caseload once at page load is
+        // the cost of matching on it offline; if this ever becomes slow on a
+        // very large batch, the fix is a normalised hash written at sync time
+        // (exact match only — which is all this field supports anyway).
+        let lookupValue = "";
+        if (LOOKUP_FIELD) {
+          const cell = r.data?.[LOOKUP_FIELD];
+          if (cell != null && cell !== "") {
+            try {
+              lookupValue = looksEncrypted(String(cell))
+                ? await fernetDecryptString(String(cell), keyB64)
+                : String(cell);
+            } catch (e) {
+              // One unreadable record must not take out the whole box.
+              console.warn('[lookup] decrypt failed for', full, e);
+            }
+          }
+        }
+
+        out.push({
+          uuid: raw,
+          // An encrypted empty string decrypts cleanly to "" — a valid token
+          // with nothing behind it. Trim so that reads as absent.
+          lookupValue: String(lookupValue || "").trim(),
+        });
+      }
+
+      if (LOOKUP_FIELD) {
+        const withValue = out.filter(c => c.lookupValue).length;
+        console.info(`[lookup] field '${LOOKUP_FIELD}': ${withValue}/${out.length} records carry a value`);
+      }
+      return out;
+    }
+
+    // An exact hit on any id field short-circuits the prefix rules: a pasted or
+    // scanned-then-retyped full code must keep working regardless of length.
+    // Three outcomes, in priority order:
+    //   exact    — a full reference ID (unchanged behaviour)
+    //   byField  — every record whose configured lookup value equals the input.
+    //              More than one is AMBIGUOUS and must block: an admin can
+    //              configure a field that turns out not to be unique, and
+    //              handing over the first match would hand over a stranger.
+    //   prefix   — reference ID only, ≥ MIN_PREFIX chars (unchanged)
+    //
+    // No prefix matching on the lookup field, by design: it is typically short
+    // and has no check digit, so a mistyped character would not fail — it would
+    // resolve to a different person.
+    function lookup(query) {
+      const s = query.trim().toLowerCase();
+      const list = candidates || [];
+
+      const exact = list.find(c => c.uuid.toLowerCase() === s) || null;
+
+      const byField = LOOKUP_FIELD
+        ? list.filter(c => c.lookupValue && c.lookupValue.toLowerCase() === s)
+        : [];
+
+      const prefix = (s.length >= MIN_PREFIX)
+        ? list.filter(c => c.uuid.toLowerCase().startsWith(s))
+        : [];
+
+      return { exact, byField, prefix };
+    }
+
+    function setHint(text, state) {
+      if (!manualHint) return;
+      manualHint.textContent = text || '';
+      manualHint.classList.remove('is-ready', 'is-wait', 'is-none');
+      if (state) manualHint.classList.add(state);
+    }
+
+    function updateManualState() {
+      const raw = manualCodeInput.value.trim();
+
+      if (!raw) {
+        manualSubmitBtn.disabled = true;
+        setHint('', null);
+        return;
+      }
+
+      // Not loaded yet, or nothing cached: behave as before this change.
+      if (candidates === null || candidates.length === 0) {
+        manualSubmitBtn.disabled = false;
+        setHint('', null);
+        return;
+      }
+
+      const { exact, byField, prefix } = lookup(raw);
+
+      if (exact) {
+        manualSubmitBtn.disabled = false;
+        setHint(TXT.lookup_one, 'is-ready');
+        return;
+      }
+
+      // Configured lookup field. Exactly one match unlocks Go; several means
+      // the field is not unique for this value and the operator must fall back
+      // to the reference ID — we never pick one.
+      if (byField.length === 1) {
+        manualSubmitBtn.disabled = false;
+        setHint(TXT.lookup_one, 'is-ready');
+        return;
+      }
+      if (byField.length > 1) {
+        manualSubmitBtn.disabled = true;
+        setHint(TXT.lookup_duplicate.replace('{n}', byField.length), 'is-none');
+        return;
+      }
+
+      if (raw.length < MIN_PREFIX) {
+        manualSubmitBtn.disabled = true;
+        setHint(TXT.lookup_min.replace('{n}', MIN_PREFIX), 'is-wait');
+        return;
+      }
+
+      if (prefix.length === 1) {
+        manualSubmitBtn.disabled = false;
+        setHint(TXT.lookup_one, 'is-ready');
+      } else if (prefix.length === 0) {
+        manualSubmitBtn.disabled = true;
+        setHint(TXT.lookup_none, 'is-none');
+      } else {
+        // Count only — never names or partial ids, so the box cannot be used to
+        // read out the caseload.
+        manualSubmitBtn.disabled = true;
+        setHint(TXT.lookup_many.replace('{n}', prefix.length), 'is-wait');
+      }
+    }
 
     if (manualToggleBtn) {
       manualToggleBtn.addEventListener('click', () => {
@@ -879,12 +1164,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    manualCodeInput.addEventListener('input', () => {
-      manualSubmitBtn.disabled = manualCodeInput.value.trim() === '';
-    });
+    manualCodeInput.addEventListener('input', updateManualState);
 
     manualCodeInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && manualCodeInput.value.trim()) {
+      if (e.key === 'Enter' && !manualSubmitBtn.disabled) {
         submitManualCode();
       }
     });
@@ -894,14 +1177,55 @@ document.addEventListener("DOMContentLoaded", () => {
     function submitManualCode() {
       const code = manualCodeInput.value.trim();
       if (!code) return;
+
+      // Resolve a partial UUID to the single record it points at, so everything
+      // downstream (routing, already-scanned checks, the beneficiary page) still
+      // receives a complete id and needs no changes.
+      let target = code;
+      if (candidates && candidates.length) {
+        const { exact, byField, prefix } = lookup(code);
+        if (exact) {
+          target = code;
+        } else if (byField.length === 1) {
+          // Resolve the alternative identifier to the reference ID, so routing,
+          // the already-scanned check and the beneficiary page all keep
+          // receiving exactly what they received before.
+          target = byField[0].uuid;
+        } else if (byField.length > 1) {
+          updateManualState();   // not unique for this value — never guess
+          return;
+        } else if (code.length >= MIN_PREFIX && prefix.length === 1) {
+          target = prefix[0].uuid;
+        } else {
+          updateManualState();   // still ambiguous / too short — don't guess
+          return;
+        }
+      }
+
       manualSubmitBtn.disabled = true;
       manualSubmitBtn.textContent = '…';
       cleanup(); // stop camera if running
-      routeAfterScan(code);
+      routeAfterScan(target);
     }
 
-  })();
+    // Load the cached ids once, then reflect them in the box. Done after the
+    // listeners are wired so a fast typist is never left with a stale hint.
+    loadCandidates().then((list) => {
+      candidates = list;
+      // Name the identifier the operator should actually type. LOOKUP_FIELD and
+      // LOOKUP_LABEL are only set once loadCandidates() has read the config, so
+      // this must happen here and not earlier.
+      if (LOOKUP_FIELD && LOOKUP_LABEL) {
+        const lab = document.querySelector('label[for="manualCodeInput"]');
+        if (lab) {
+          lab.textContent = "{{ t.manual_code_label_field or 'Enter {field}' }}"
+            .replace('{field}', LOOKUP_LABEL);
+        }
+      }
+      updateManualState();
+    });
 
+  })();
 });
 </script>
 
