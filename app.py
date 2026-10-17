@@ -2451,8 +2451,16 @@ def fsp_admin():
     # worse than a late 403 from 121 itself.
 
     # 1. Can this operator reconcile payments? Gates the Send block.
-    can_update_payments = (
-        _has_program_permission("fsp", program_id, "payment.update") is not False
+    can_update_payments = all(
+        _has_program_permission("fsp", program_id, perm) is not False
+        for perm in (
+            "payment.update",
+            "payment.retry",
+            "payment.start",
+            "program.read",
+            "payment.read",
+            "payment:transaction.read",
+        )
     )
 
     # 2. Can this operator update registrations? Gates the editable fields,
