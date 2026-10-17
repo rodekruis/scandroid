@@ -2451,8 +2451,16 @@ def fsp_admin():
     # worse than a late 403 from 121 itself.
 
     # 1. Can this operator reconcile payments? Gates the Send block.
-    can_update_payments = (
-        _has_program_permission("fsp", program_id, "payment.update") is not False
+    can_update_payments = all(
+        _has_program_permission("fsp", program_id, perm) is not False
+        for perm in (
+            "payment.update",
+            "payment.retry",
+            "payment.start",
+            "program.read",
+            "payment.read",
+            "payment:transaction.read",
+        )
     )
 
     # 2. Can this operator update registrations? Gates the editable fields,
@@ -3296,30 +3304,63 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
     fallback and no global: a program can run several FSP configurations at
     once with different columns, and picking one arbitrarily silently
     reconciles against the wrong field.
+
+    Source order mirrors offline_sync.payment_fsp_names: the payments LIST
+    carries `fsps`; the single-payment endpoint is only a fallback.
+    Every path that returns None prints why.
     """
     config = load_config()
     url121 = config.get("url121")
     if not (url121 and program_id and payment_id):
+        print(
+            f"[get_column_for_payment] missing input: url121={bool(url121)} "
+            f"program_id={program_id!r} payment_id={payment_id!r}"
+        )
         return None
 
     token = token or get_121_token()
     if not token:
+        print("[get_column_for_payment] no 121 token")
         return None
     if col_map is None:
         col_map = get_fsp_column_map(program_id, token=token)
     if not col_map:
+        print(f"[get_column_for_payment] program {program_id}: empty column map")
         return None
 
+    fsps = []
     try:
         r = requests.get(
-            f"{url121}/api/programs/{program_id}/payments/{payment_id}",
+            f"{url121}/api/programs/{program_id}/payments",
             cookies={"access_token_general": token},
-            timeout=10,
+            timeout=15,
         )
-        if r.status_code != 200:
-            print(f"[get_column_for_payment] payment {payment_id}: HTTP {r.status_code}")
-            return None
-        fsps = r.json().get("fsps") or []
+        if r.status_code == 200:
+            payload = r.json()
+            items = payload if isinstance(payload, list) else payload.get("data", [])
+            for p in items:
+                if str(p.get("paymentId", p.get("id"))) == str(payment_id):
+                    fsps = p.get("fsps") or []
+                    break
+        else:
+            print(
+                f"[get_column_for_payment] program {program_id} payments list: "
+                f"HTTP {r.status_code}"
+            )
+
+        if not fsps:
+            r = requests.get(
+                f"{url121}/api/programs/{program_id}/payments/{payment_id}",
+                cookies={"access_token_general": token},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                print(
+                    f"[get_column_for_payment] program {program_id} payment "
+                    f"{payment_id}: HTTP {r.status_code}"
+                )
+                return None
+            fsps = r.json().get("fsps") or []
     except Exception as e:
         print(f"[get_column_for_payment] API error: {e}")
         return None
@@ -3329,6 +3370,14 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
         for f in fsps
         if isinstance(f, dict) and f.get("programFspConfigurationName")
     ]
+    if not names:
+        print(
+            f"[get_column_for_payment] program {program_id} payment {payment_id}: "
+            "121 reported no FSP configuration"
+        )
+        return None
+
+    unknown = [n for n in names if n not in col_map]
     columns = {col_map[n] for n in names if n in col_map}
 
     if len(columns) == 1:
@@ -3338,8 +3387,12 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
             f"[get_column_for_payment] payment {payment_id} spans FSP configs "
             f"{names} with conflicting columns {sorted(columns)} — cannot reconcile."
         )
+    else:
+        print(
+            f"[get_column_for_payment] program {program_id} payment {payment_id}: "
+            f"configs {unknown} not in column map {sorted(col_map)}"
+        )
     return None
-
 
 def get_121_token():
     import requests

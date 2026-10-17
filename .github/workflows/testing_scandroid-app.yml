@@ -7,7 +7,7 @@ name: Build and deploy Python app to Azure Web App - scandroid-app
 on:
   push:
     branches:
-      - testing
+      - 'testing'
   workflow_dispatch:
 
 jobs:
@@ -63,4 +63,4 @@ jobs:
         with:
           app-name: 'scandroid-app'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_46CC2FFAF0A94A09AD5C6D9E7D99F05A }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_FDE0E4896C36477A9829980E3430AECE }}
