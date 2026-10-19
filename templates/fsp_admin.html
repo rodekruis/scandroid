@@ -607,6 +607,24 @@
         word-break: break-word; text-align: left;
       }
       .sync-error.visible { display: block; }
+
+      /* Shown under the Send block when 121 rejected some/all payments.
+         Offers the rejected rows as a CSV for manual reconciliation. */
+      .reconcile-box {
+        display: none; margin-top: 10px; padding: 10px 12px; background: #fef2f2;
+        border: 1px solid #fecaca; border-left: 3px solid #dc2626;
+        color: #991b1b; border-radius: 8px; font-size: 0.82rem;
+        line-height: 1.45; text-align: left;
+      }
+      .reconcile-box.visible { display: block; }
+      .reconcile-box .reconcile-msg { font-weight: 600; }
+      .reconcile-box .reconcile-count { margin-top: 4px; font-weight: 500; }
+      .reconcile-box .reconcile-btn {
+        display: inline-block; margin-top: 8px; padding: 7px 12px;
+        background: #dc2626; color: #fff; border: 0; border-radius: 6px;
+        font-size: 0.82rem; font-weight: 600; cursor: pointer;
+      }
+      .reconcile-box .reconcile-btn:hover { background: #b91c1c; }
   </style>
 
 </head>
@@ -765,6 +783,9 @@
       </div>
 
       <div id="sendError" class="error-box" style="display:none;"></div>
+
+      <!-- Filled by showReconcileDownload() when sending to 121 fails. -->
+      <div id="sendReconcile" class="reconcile-box"></div>
 
       <div id="sendOfflineHint" class="offline-hint">
         {{ t.cannot_send_offline or "Cannot send while offline" }}
@@ -1979,6 +2000,96 @@ function buildRegistrationUpdateCsv(payments) {
   return lines.join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// Manual reconciliation fallback.
+// When 121 rejects some or all payments, the rejected rows are offered as a
+// CSV the operator forwards to the finance manager. Human-readable (one row
+// per scanned payment, with paymentId + the 121 match column), decrypted
+// match values, UTF-8 BOM so Excel shows non-Latin names correctly.
+// ---------------------------------------------------------------------------
+let reconcileObjectUrl = null;
+
+async function buildReconciliationCsv(rows) {
+  const db = await openScandroidDB();
+  const metaStore = db.transaction("meta", "readonly").objectStore("meta");
+  const encKeyObj = await metaStore.get("encryptionKey");
+  const encKey = encKeyObj?.value || "";
+
+  const esc = (val) => {
+    const v = String(val == null ? "" : val);
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  };
+
+  const sorted = [...rows].sort((a, b) =>
+    String(a.paymentId ?? "").localeCompare(String(b.paymentId ?? ""), undefined, { numeric: true }) ||
+    String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")));
+
+  const out = [["paymentId", "paymentName", "columnToMatch", "matchValue",
+                "status", "amount", "referenceId", "scannedAt"]];
+  for (const p of sorted) {
+    let matchValue = p.match_value;
+    if (encKey && matchValue && String(matchValue).startsWith("gAAAA")) {
+      matchValue = await decrypt(matchValue, encKey);
+    }
+    out.push([p.paymentId ?? "", p.payment_name ?? "", p.column_to_match ?? "",
+              matchValue ?? "", p.status ?? "", p.amount ?? "",
+              p.reference_id ?? "", p.timestamp ?? ""]);
+  }
+  return "\uFEFF" + out.map(r => r.map(esc).join(",")).join("\r\n");
+}
+
+function hideReconcileDownload() {
+  const box = document.getElementById("sendReconcile");
+  if (box) { box.classList.remove("visible"); box.innerHTML = ""; }
+  if (reconcileObjectUrl) { URL.revokeObjectURL(reconcileObjectUrl); reconcileObjectUrl = null; }
+}
+
+async function showReconcileDownload(failedRows, totalCount) {
+  const box = document.getElementById("sendReconcile");
+  if (!box || !failedRows || !failedRows.length) return;
+
+  let csv;
+  try {
+    csv = await buildReconciliationCsv(failedRows);
+  } catch (e) {
+    console.error("Could not build reconciliation CSV:", e);
+    return;
+  }
+  if (reconcileObjectUrl) URL.revokeObjectURL(reconcileObjectUrl);
+  reconcileObjectUrl = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const filename = `payments_reconciliation_program${ACTIVE_PROGRAM_ID}_${stamp}.csv`;
+
+  box.innerHTML = "";
+  const msg = document.createElement("div");
+  msg.className = "reconcile-msg";
+  msg.textContent = t.payment_send_error_reconcile ||
+    "Error sending payments, please forward this file to the finance manager.";
+  box.appendChild(msg);
+
+  // Partial failure: say how many, so the operator knows the rest went through.
+  if (failedRows.length < totalCount) {
+    const cnt = document.createElement("div");
+    cnt.className = "reconcile-count";
+    cnt.textContent = (t.payment_send_partial_count ||
+      "{failed} of {total} payments could not be sent to 121.")
+      .replace("{failed}", failedRows.length).replace("{total}", totalCount);
+    box.appendChild(cnt);
+  }
+
+  const a = document.createElement("a");
+  a.className = "reconcile-btn";
+  a.href = reconcileObjectUrl;
+  a.download = filename;
+  a.textContent = "⬇ " + (t.download_reconciliation_csv || "Download CSV for manual reconciliation");
+  box.appendChild(a);
+
+  box.classList.add("visible");
+}
+
 // The button is not rendered at all without payment.update, so this must be
 // null-safe. The CAN_UPDATE_PAYMENTS check inside is defence in depth: nothing
 // should ever reach /submit-payments from an account that cannot use it.
@@ -1991,6 +2102,13 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
 
   const errorBox = document.getElementById("sendError");
   errorBox.style.display = "none";
+  errorBox.textContent = "";
+  hideReconcileDownload();
+
+  // Rows that did NOT reach 121. Starts as "all of them" once we have the
+  // list and is narrowed only after the server confirms which paymentIds it
+  // accepted, so any failure path below offers the right file.
+  let failedRows = [];
 
   // Save original HTML (SVG + “Send”)
   const originalHTML = btn.innerHTML;
@@ -2016,6 +2134,8 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
       return;
     }
 
+    failedRows = payments;
+
     const csvContent = await buildCsvFromPayments(payments);
     const blob = new Blob([csvContent], { type: "text/csv" });
     const formData = new FormData();
@@ -2028,6 +2148,18 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
 
     const text = await res.text();
     if (!res.ok) throw new Error(text || "Failed submitting payments");
+
+    // 200 can still be a PARTIAL success: the server lists the paymentIds 121
+    // rejected in X-Failed-Payment-Ids. Rows without a paymentId are skipped
+    // server-side, so they never reached 121 either.
+    const failedPids = new Set(
+      (res.headers.get("X-Failed-Payment-Ids") || "")
+        .split(",").map(s => s.trim()).filter(Boolean));
+    failedRows = payments.filter(p => {
+      const pid = p.paymentId == null ? "" : String(p.paymentId);
+      return !pid || failedPids.has(pid);
+    });
+    const failedSet = new Set(failedRows);
 
     // --- SECOND CSV: push editable-field updates (e.g. prepaid card numbers)
     // back to 121 via the bulk registrations PATCH. Non-fatal: if this fails,
@@ -2062,7 +2194,9 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
     const store = tx.objectStore("payments");
 
     for (const p of payments) {
-      if (p.status === "success") {
+      // Rows 121 rejected stay "success" (pending), exactly as on a full
+      // failure, so they are not lost from the device.
+      if (p.status === "success" && !failedSet.has(p)) {
         p.status = "submitted";
         await store.put(p);
       }
@@ -2071,10 +2205,16 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
     // UI / localStorage, so a refresh can't race an uncommitted change.
     await tx.done;
 
-    // Update counters
-    document.getElementById("paymentsReadyCount").textContent = "0";
-    document.getElementById("peopleScannedCount").textContent = "0";
-    document.getElementById("totalAmountText").textContent = "0";
+    // Update counters (re-read when some rows are still pending)
+    if (failedRows.length) {
+      await loadPaymentsReadyCount();
+      await loadPeopleScannedCount();
+      await loadTotalAmount();
+    } else {
+      document.getElementById("paymentsReadyCount").textContent = "0";
+      document.getElementById("peopleScannedCount").textContent = "0";
+      document.getElementById("totalAmountText").textContent = "0";
+    }
 
     // Update last submission timestamp
     const now = new Date();
@@ -2091,12 +2231,22 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
 
     // Payments succeeded; if the registration (card number) update failed,
     // warn without treating the whole send as failed.
+    const notices = [];
+    if (failedRows.length) {
+      let s = (text || "").trim();
+      if (s.length > 500) s = s.slice(0, 500) + "…";
+      if (s) notices.push(s);
+    }
     if (regUpdateWarning) {
       let w = regUpdateWarning;
       if (w.length > 500) w = w.slice(0, 500) + "…";
-      errorBox.textContent = "⚠️ Payments sent, but registration updates failed: " + w;
+      notices.push("⚠️ Payments sent, but registration updates failed: " + w);
+    }
+    if (notices.length) {
+      errorBox.textContent = notices.join(" — ");
       errorBox.style.display = "block";
     }
+    if (failedRows.length) await showReconcileDownload(failedRows, payments.length);
 
   } catch (err) {
     console.error(err);
@@ -2108,6 +2258,7 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
       ? ("❌ Failed to send payments: " + detail)
       : "❌ Failed to send payments — records left unchanged for debugging.";
     errorBox.style.display = "block";
+    if (failedRows.length) await showReconcileDownload(failedRows, payments.length);
   }
 
   // Restore original button
