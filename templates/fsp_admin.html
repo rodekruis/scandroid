@@ -620,7 +620,7 @@
       .reconcile-box .reconcile-msg { font-weight: 600; }
       .reconcile-box .reconcile-count { margin-top: 4px; font-weight: 500; }
       .reconcile-box .reconcile-btn {
-        display: inline-block; margin-top: 8px; padding: 7px 12px;
+        display: inline-block; margin: 8px 8px 0 0; padding: 7px 12px;
         background: #dc2626; color: #fff; border: 0; border-radius: 6px;
         font-size: 0.82rem; font-weight: 600; cursor: pointer;
       }
@@ -2002,14 +2002,19 @@ function buildRegistrationUpdateCsv(payments) {
 
 // ---------------------------------------------------------------------------
 // Manual reconciliation fallback.
-// When 121 rejects some or all payments, the rejected rows are offered as a
-// CSV the operator forwards to the finance manager. Human-readable (one row
-// per scanned payment, with paymentId + the 121 match column), decrypted
-// match values, UTF-8 BOM so Excel shows non-Latin names correctly.
+// When 121 rejects some or all payments, the rejected rows are offered for
+// download, ONE CSV PER PAYMENT ("Payment ID #103.csv"), in exactly the shape
+// /submit-payments uploads to 121's excel-reconciliation endpoint:
+//     <match column>,status      e.g.  fullName,status
+//     <match value>,<status>           Mickey Mouse,success
+// so the finance manager can upload each file to that payment in 121 as-is.
+// Comma-separated, CRLF, no BOM (a BOM would end up in the header name).
 // ---------------------------------------------------------------------------
-let reconcileObjectUrl = null;
+let reconcileObjectUrls = [];
 
-async function buildReconciliationCsv(rows) {
+// Group rows by paymentId and build one CSV per payment.
+// Returns [{ paymentId, filename, csv, count }], sorted by paymentId.
+async function buildReconciliationFiles(rows) {
   const db = await openScandroidDB();
   const metaStore = db.transaction("meta", "readonly").objectStore("meta");
   const encKeyObj = await metaStore.get("encryptionKey");
@@ -2020,50 +2025,59 @@ async function buildReconciliationCsv(rows) {
     return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   };
 
-  const sorted = [...rows].sort((a, b) =>
-    String(a.paymentId ?? "").localeCompare(String(b.paymentId ?? ""), undefined, { numeric: true }) ||
-    String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")));
-
-  const out = [["paymentId", "paymentName", "columnToMatch", "matchValue",
-                "status", "amount", "referenceId", "scannedAt"]];
-  for (const p of sorted) {
-    let matchValue = p.match_value;
-    if (encKey && matchValue && String(matchValue).startsWith("gAAAA")) {
-      matchValue = await decrypt(matchValue, encKey);
-    }
-    out.push([p.paymentId ?? "", p.payment_name ?? "", p.column_to_match ?? "",
-              matchValue ?? "", p.status ?? "", p.amount ?? "",
-              p.reference_id ?? "", p.timestamp ?? ""]);
+  const groups = new Map();
+  for (const p of rows) {
+    const pid = p.paymentId == null || p.paymentId === "" ? "unknown" : String(p.paymentId);
+    if (!groups.has(pid)) groups.set(pid, []);
+    groups.get(pid).push(p);
   }
-  return "\uFEFF" + out.map(r => r.map(esc).join(",")).join("\r\n");
+
+  const files = [];
+  const pids = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  for (const pid of pids) {
+    const items = groups.get(pid);
+    // Header = the match column this payment's rows were scanned against
+    // (stored on each row at scan time from the synced FSP configuration).
+    const column = (items.find(p => p.column_to_match) || {}).column_to_match || "matchValue";
+
+    const lines = [[column, "status"].map(esc).join(",")];
+    for (const p of items) {
+      let matchValue = p.match_value;
+      if (encKey && matchValue && String(matchValue).startsWith("gAAAA")) {
+        matchValue = await decrypt(matchValue, encKey);
+      }
+      lines.push([matchValue ?? "", p.status ?? ""].map(esc).join(","));
+    }
+    files.push({
+      paymentId: pid,
+      filename: `Payment ID #${pid}.csv`,
+      csv: lines.join("\r\n") + "\r\n",
+      count: items.length
+    });
+  }
+  return files;
 }
 
 function hideReconcileDownload() {
   const box = document.getElementById("sendReconcile");
   if (box) { box.classList.remove("visible"); box.innerHTML = ""; }
-  if (reconcileObjectUrl) { URL.revokeObjectURL(reconcileObjectUrl); reconcileObjectUrl = null; }
+  reconcileObjectUrls.forEach(u => URL.revokeObjectURL(u));
+  reconcileObjectUrls = [];
 }
 
 async function showReconcileDownload(failedRows, totalCount) {
   const box = document.getElementById("sendReconcile");
   if (!box || !failedRows || !failedRows.length) return;
 
-  let csv;
+  let files;
   try {
-    csv = await buildReconciliationCsv(failedRows);
+    files = await buildReconciliationFiles(failedRows);
   } catch (e) {
-    console.error("Could not build reconciliation CSV:", e);
+    console.error("Could not build reconciliation CSVs:", e);
     return;
   }
-  if (reconcileObjectUrl) URL.revokeObjectURL(reconcileObjectUrl);
-  reconcileObjectUrl = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  hideReconcileDownload();
 
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const filename = `payments_reconciliation_program${ACTIVE_PROGRAM_ID}_${stamp}.csv`;
-
-  box.innerHTML = "";
   const msg = document.createElement("div");
   msg.className = "reconcile-msg";
   msg.textContent = t.payment_send_error_reconcile ||
@@ -2080,12 +2094,22 @@ async function showReconcileDownload(failedRows, totalCount) {
     box.appendChild(cnt);
   }
 
-  const a = document.createElement("a");
-  a.className = "reconcile-btn";
-  a.href = reconcileObjectUrl;
-  a.download = filename;
-  a.textContent = "⬇ " + (t.download_reconciliation_csv || "Download CSV for manual reconciliation");
-  box.appendChild(a);
+  const label = document.createElement("div");
+  label.className = "reconcile-count";
+  label.textContent = (t.download_reconciliation_csv || "Download CSV for manual reconciliation") + ":";
+  box.appendChild(label);
+
+  // One download button per payment.
+  for (const f of files) {
+    const url = URL.createObjectURL(new Blob([f.csv], { type: "text/csv;charset=utf-8" }));
+    reconcileObjectUrls.push(url);
+    const a = document.createElement("a");
+    a.className = "reconcile-btn";
+    a.href = url;
+    a.download = f.filename;
+    a.textContent = `⬇ Payment ID #${f.paymentId} (${f.count})`;
+    box.appendChild(a);
+  }
 
   box.classList.add("visible");
 }
