@@ -609,6 +609,7 @@
       .sync-error.visible { display: block; }
   </style>
 
+{% include "_client_log.html" %}
 </head>
 
 <body>
@@ -817,6 +818,12 @@ document.addEventListener('click', function(e) {
 
 <script>
   const ACTIVE_PROGRAM_ID = "{{ program_id }}";
+  // Telemetry (templates/_client_log.html). Never throws, never blocks.
+  function adminEvent(name, level, extra) {
+    window.ScanLog && ScanLog.event(name, function () {
+      return Object.assign({ program_id: ACTIVE_PROGRAM_ID }, extra ? extra() : {});
+    }, level);
+  }
   // Tri-state resolved server-side: false ONLY when 121 definitely says this
   // operator lacks payment.update for this program (see fsp_admin in app.py).
   const CAN_UPDATE_PAYMENTS = {{ can_update_payments|tojson }};
@@ -1069,6 +1076,11 @@ document.addEventListener('click', function(e) {
     if (detail) detail.textContent = "Importing records and photos…";
 
     const importResult = await importLatestCache(true);
+    // Compare what the server built with what this device actually stored.
+    adminEvent("device.import_completed", importResult.written ? "info" : "warning", function () {
+      return { job_id: job && job.jobId, server_count: job && job.count,
+               records: importResult.written, photos: importResult.photosWritten };
+    });
 
     stopSyncClock();
     setSyncBusy(false);
@@ -1149,6 +1161,7 @@ document.addEventListener('click', function(e) {
       beginSyncPolling();
     } catch (err) {
       console.error(err);
+      adminEvent("device.sync_start_failed", "error", function () { return { error: err && err.name, message: err && err.message }; });
       showSyncFailure({
         message: "Could not start sync",
         error: (err && err.message) ? String(err.message) : String(err),
@@ -1463,6 +1476,7 @@ function scopedUUID(uuid) {
           }
         } catch (e) {
           console.warn('[sync] could not clear stale tranches:', e);
+          adminEvent("device.import_warning", "warning", function () { return { problem: "stale_tranches_not_cleared", error: e && e.name }; });
         }
 
         let tranchesWritten = 0;
@@ -1521,6 +1535,7 @@ function scopedUUID(uuid) {
             console.info('[sync] match columns by payment:', byPayment);
           } else {
             console.warn('[sync] batch_info.json carries no columnToMatchByPayment.');
+            adminEvent("device.import_warning", "warning", function () { return { problem: "no_column_to_match_by_payment" }; });
           }
 
           // Legacy scalar: only meaningful when every payment agrees. The sync
@@ -1539,9 +1554,11 @@ function scopedUUID(uuid) {
           }
         } else {
           console.warn('[sync] batch_info.json not found in bundle.');
+          adminEvent("device.import_warning", "warning", function () { return { problem: "batch_info_missing" }; });
         }
       } catch (e) {
         console.warn('[sync] Failed to stash match columns:', e);
+        adminEvent("device.import_warning", "warning", function () { return { problem: "match_columns_not_saved", error: e && e.name }; });
       }
 
       // Store display config so beneficiary_offline.html can load it offline
@@ -1555,6 +1572,7 @@ function scopedUUID(uuid) {
 
     } catch (err) {
       console.error(err);
+      adminEvent("device.import_failed", "error", function () { return { error: err && err.name, message: err && err.message }; });
       if (!silent) {
         statusDiv.textContent = `❌ Import failed: ${err.message || err}`;
       }
@@ -2048,6 +2066,7 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
       }
     } catch (regErr) {
       console.error("Registration update send failed:", regErr);
+      adminEvent("device.registration_send_failed", "error", function () { return { error: regErr && regErr.name, message: regErr && regErr.message }; });
       regUpdateWarning = (regErr && regErr.message) ? String(regErr.message) : String(regErr);
     }
 
@@ -2070,6 +2089,9 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
     // Wait for the write transaction to actually commit before updating the
     // UI / localStorage, so a refresh can't race an uncommitted change.
     await tx.done;
+    adminEvent("device.send_completed", "info", function () {
+      return { payments: payments.length, registration_update_failed: regUpdateWarning ? "yes" : "no" };
+    });
 
     // Update counters
     document.getElementById("paymentsReadyCount").textContent = "0";
@@ -2100,6 +2122,9 @@ if (sendBtnEl) sendBtnEl.addEventListener("click", async function () {
 
   } catch (err) {
     console.error(err);
+    adminEvent("device.send_failed", "error", function () {
+      return { error: err && err.name, message: (err && err.name !== "Error") ? err.message : "" };
+    });
     // Surface the actual server/network reason instead of a generic message.
     // (When the server responds non-OK, `err.message` holds its response body.)
     let detail = (err && err.message) ? String(err.message).trim() : "";

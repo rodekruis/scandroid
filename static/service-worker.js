@@ -1,5 +1,5 @@
-/* Scandroid PWA service worker — v40 */
-const CACHE_VERSION = 'v40'; // bump on every deploy
+/* Scandroid PWA service worker — v41 */
+const CACHE_VERSION = 'v41'; // bump on every deploy
 const CACHE_NAME = `scandroid-cache-${CACHE_VERSION}`;
 
 // NOTE: We deliberately do NOT precache /scan, /fsp-admin, /fsp-login here
@@ -17,6 +17,33 @@ const PRECACHE_URLS = [
 
 console.log(`[ServiceWorker] Installing version: ${CACHE_NAME}`);
 
+// Telemetry: report a problem to the server, fire-and-forget. A service worker
+// cannot use the pages' localStorage queue (templates/_client_log.html), so
+// this goes straight to /api/client-log; if that fails, it is simply lost.
+// Never awaited and never throws, so caching behaves exactly as before.
+function reportSwProblem(name, fields) {
+  try {
+    fetch("/api/client-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        device: "",
+        sw_cache: CACHE_NAME,
+        events: [{
+          i: Math.random().toString(36).slice(2),
+          e: name,
+          l: "warning",
+          t: new Date().toISOString(),
+          p: "/service-worker.js",
+          o: 1,
+          f: fields || {}
+        }]
+      })
+    }).catch(() => {});
+  } catch (e) {}
+}
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -26,6 +53,7 @@ self.addEventListener("install", (event) => {
           await cache.add(url);
         } catch (err) {
           console.warn("[SW] Failed to cache:", url);
+          reportSwProblem("sw.precache_failed", { url: String(url), error: String((err && err.message) || err) });
         }
       }
     })
@@ -161,6 +189,7 @@ async function networkFirstWithCacheUpdate(req, timeoutMs) {
           cache.put(url.pathname, res.clone());
         } catch (e) {
           console.warn("[SW] cache.put failed:", e);
+          reportSwProblem("sw.cache_put_failed", { path: url.pathname, error: String((e && e.message) || e) });
         }
       }
       return res;

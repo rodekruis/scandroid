@@ -418,6 +418,7 @@
       }
     }
   </style>
+{% include "_client_log.html" %}
 </head>
 
 <body>
@@ -551,6 +552,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const startBtn = document.getElementById('startBtn');
     const lang = "{{ lang }}";
     const PROGRAM_ID = "{{ program_id }}";
+    // Telemetry (templates/_client_log.html). Never throws, never blocks, and
+    // never records the scanned value itself.
+    let lastScanMethod = "unknown";
+    function scanEvent(name, level, extra) {
+      window.ScanLog && ScanLog.event(name, function () {
+        return Object.assign({ program_id: PROGRAM_ID, method: lastScanMethod }, extra ? extra() : {});
+      }, level);
+    }
     // Fallback only. Preferred source is IndexedDB meta.encryptionKey — this
     // page is precached cacheFirst, so a Jinja value here freezes at precache
     // time and would go stale if the key were rotated.
@@ -726,6 +735,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!rec) rec = await dbFindRecordByAnyId(db, scannedId);
 
         if (!rec) {
+          scanEvent("scan.not_found", "warning", function () { return ScanLog.idShape(scannedId); });
           window.location.href =
             `/invalid-qr?reason=${encodeURIComponent("No offline record found")}&lang=${lang}`;
           cleanup();
@@ -734,6 +744,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const already = await dbCheckAlreadyScanned(db, scannedId);
         if (already) {
+          scanEvent("scan.already_scanned", "warning");
           window.location.href =
             `/invalid-qr?reason=${encodeURIComponent("Already scanned")}&lang=${lang}`;
           cleanup();
@@ -743,6 +754,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const isValid = String(rec.valid).toLowerCase() === "true";
         if (!isValid) {
           const reason = rec.reason || "Invalid QR";
+          scanEvent("scan.invalid", "warning", function () { return { reason: reason }; });
           window.location.href =
             `/invalid-qr?reason=${encodeURIComponent(reason)}&lang=${lang}`;
           cleanup();
@@ -752,11 +764,13 @@ document.addEventListener("DOMContentLoaded", () => {
         const rawUuid = PROGRAM_ID && rec.uuid.startsWith(PROGRAM_ID + ':')
           ? rec.uuid.slice(PROGRAM_ID.length + 1)
           : rec.uuid;
+        scanEvent("scan.matched", "info");
         window.location.href =
           `/beneficiary-offline?uuid=${encodeURIComponent(rawUuid)}&lang=${lang}&program_id=${encodeURIComponent(PROGRAM_ID)}`;
       };
 
       dbReq.onerror = () => {
+        scanEvent("scan.db_error", "error", function () { return { error: dbReq.error && dbReq.error.name }; });
         window.location.href =
           `/invalid-qr?reason=${encodeURIComponent("Database error")}&lang=${lang}`;
       };
@@ -777,7 +791,8 @@ document.addEventListener("DOMContentLoaded", () => {
           audio: false,
           video: { facingMode: { ideal: 'environment' } }
         });
-      } catch {
+      } catch (camErr) {
+        scanEvent("scan.camera_unavailable", "warning", function () { return { error: camErr && camErr.name }; });
         setStatus(TXT.denied);
         return;
       }
@@ -889,6 +904,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (value) {
           cleanup();
+          lastScanMethod = "qr";
           return routeAfterScan(value);
         }
         rafId = requestAnimationFrame(tick);
@@ -987,13 +1003,14 @@ document.addEventListener("DOMContentLoaded", () => {
           const match = (pc.fields || []).find(f => (f.key || f.name || f.field) === field);
           LOOKUP_LABEL = (match?.labels?.[lang] || match?.labels?.en) || field;
         }
-      } catch (e) { console.warn('[lookup] config read failed', e); }
+      } catch (e) { console.warn('[lookup] config read failed', e); scanEvent("lookup.config_read_failed", "warning", function () { return { error: e && e.name }; }); }
 
       if (LOOKUP_FIELD && !keyB64) {
         // Without the key the alternative field cannot be read at all. Say so
         // in the console and fall back to reference ID rather than silently
         // matching nothing.
         console.warn('[lookup] no Fernet key available — falling back to reference ID');
+        scanEvent("lookup.no_key", "warning", function () { return { lookup_field: LOOKUP_FIELD }; });
         LOOKUP_FIELD = null;
       }
 
@@ -1008,6 +1025,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       const out = [];
+      let lookupDecryptFailures = 0;  // telemetry only
       for (const r of rows) {
         if (!r) continue;
         const full = String(r.uuid || "");
@@ -1041,6 +1059,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (e) {
               // One unreadable record must not take out the whole box.
               console.warn('[lookup] decrypt failed for', full, e);
+              lookupDecryptFailures += 1;
             }
           }
         }
@@ -1053,6 +1072,11 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       }
 
+      if (lookupDecryptFailures) {
+        scanEvent("lookup.decrypt_failed", "error", function () {
+          return { lookup_field: LOOKUP_FIELD, failed_records: lookupDecryptFailures, records: out.length };
+        });
+      }
       if (LOOKUP_FIELD) {
         const withValue = out.filter(c => c.lookupValue).length;
         console.info(`[lookup] field '${LOOKUP_FIELD}': ${withValue}/${out.length} records carry a value`);
@@ -1205,6 +1229,7 @@ document.addEventListener("DOMContentLoaded", () => {
       manualSubmitBtn.disabled = true;
       manualSubmitBtn.textContent = '…';
       cleanup(); // stop camera if running
+      lastScanMethod = "manual";
       routeAfterScan(target);
     }
 
