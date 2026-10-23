@@ -411,6 +411,28 @@ FSP_TYPE_CSV = "csv"
 FSP_TYPE_API = "api"
 
 
+def fetch_excel_unique_identifier(program_id, name):
+    """The match column of one Excel FSP configuration, from 121's dedicated
+    Excel endpoint.
+
+    121 moved Excel's columnToMatch out of the generic `properties` list into
+    its own table (121 migration move-excel-fsp-configuration-properties):
+        GET /programs/{id}/fsp-configurations/{name}/excel
+        -> {"name", "label", "uniqueIdentifierField", "exportFields"}
+    Returns "" when it is not set, or when this 121 instance predates the
+    endpoint (404) - those instances still answer through `properties`.
+    Any other non-200 raises (INVARIANT 3).
+    """
+    from urllib.parse import quote
+
+    url = f"{API_BASE}/programs/{program_id}/fsp-configurations/{quote(name, safe='')}/excel"
+    r = requests.get(url, cookies=COOKIES, timeout=REQUEST_TIMEOUT)
+    if r.status_code == 404:
+        return ""
+    r.raise_for_status()
+    return (r.json() or {}).get("uniqueIdentifierField") or ""
+
+
 def build_fsp_column_map(program_id):
     """Returns (col_map, fsp_types) for this program.
 
@@ -466,6 +488,14 @@ def build_fsp_column_map(program_id):
                 break
 
     csv_configs = sorted(n for n, t in fsp_types.items() if t == FSP_TYPE_CSV)
+
+    # Newer 121 versions no longer put columnToMatch in `properties`; ask the
+    # Excel endpoint for any Excel configuration the list did not answer.
+    for name in csv_configs:
+        if name not in col_map:
+            value = fetch_excel_unique_identifier(program_id, name)
+            if value:
+                col_map[name] = value
 
     if not csv_configs:
         raise IncompleteSyncError(

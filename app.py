@@ -3640,6 +3640,36 @@ def get_fsp_column_map(program_id, token=None):
             if prop.get("name") == "columnToMatch" and prop.get("value"):
                 col_map[name] = prop["value"]
                 break
+
+    # Newer 121 versions moved Excel's columnToMatch to a dedicated endpoint
+    # (see offline_sync.fetch_excel_unique_identifier). Ask it for any Excel
+    # configuration the `properties` list did not answer.
+    for fsp in configs:
+        if not isinstance(fsp, dict):
+            continue
+        name = fsp.get("name")
+        integration_type = (fsp.get("fsp") or {}).get("integrationType")
+        is_excel = integration_type == "csv" or (
+            not integration_type and fsp.get("fspName") == "Excel"
+        )
+        if not name or name in col_map or not is_excel:
+            continue
+        try:
+            r = requests.get(
+                f"{url121}/api/programs/{program_id}/fsp-configurations/"
+                f"{quote(name, safe='')}/excel",
+                cookies={"access_token_general": token},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                value = (r.json() or {}).get("uniqueIdentifierField")
+                if value:
+                    col_map[name] = value
+        except Exception as e:
+            telemetry.log_failure(
+                log_121, "Excel FSP configuration request failed", e,
+                program_id=program_id, fsp_configuration=name,
+            )
     return col_map
 
 
