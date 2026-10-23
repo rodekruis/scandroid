@@ -1,0 +1,199 @@
+<script>
+/*
+ * Client telemetry for Scandroid. Pages pull this file in with a Jinja include
+ * just before </head>. (This file must contain no Jinja syntax: it is
+ * rendered as a template, so even a comment quoting the include tag runs it.)
+ *
+ * Scans and verifications happen in the browser, mostly offline, so the server
+ * never sees them. Events are queued in localStorage and sent to
+ * /api/client-log, which writes them to Application Insights with the device
+ * and operator attached.
+ *
+ * Rules this file keeps, so that it can never change how a page behaves:
+ *   - Every entry point is wrapped in try/catch and does nothing on error.
+ *   - Nothing waits for it. Writing an event is one synchronous localStorage
+ *     write, so it is stored before the page navigates away; sending happens
+ *     later, in the background, and only when online.
+ *   - It uses its own localStorage keys (scandroid_telemetry_*) and caps the
+ *     queue, so the app's own scandroid_* keys always have room.
+ *   - Field values are computed inside the try (pass a function), so a mistake
+ *     at a call site cannot throw into the page.
+ *
+ * Call sites:
+ *   window.ScanLog && ScanLog.event("scan.not_found", function () {
+ *     return { program_id: PROGRAM_ID };
+ *   }, "warning");
+ *
+ * Never put beneficiary data in an event: no IDs, names, phone numbers, match
+ * values or photo data. Use ScanLog.idShape(value) to describe a scanned value
+ * without recording it.
+ */
+(function () {
+  try {
+    if (window.ScanLog) return;
+
+    var QUEUE_KEY = "scandroid_telemetry_queue";
+    var DEVICE_KEY = "scandroid_telemetry_device";
+    var MAX_QUEUE = 300;      // oldest events are dropped beyond this
+    var MAX_BATCH = 50;       // must match CLIENT_LOG_MAX_EVENTS in app.py
+    var MAX_JS_ERRORS = 10;   // per page load
+    var flushing = false;
+    var flushTimer = null;
+    var jsErrors = 0;
+
+    function readQueue() {
+      try {
+        var q = JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+        return Array.isArray(q) ? q : [];
+      } catch (e) { return []; }
+    }
+
+    function writeQueue(q) {
+      try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-MAX_QUEUE))); } catch (e) {}
+    }
+
+    function randomId() {
+      return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    }
+
+    // A random id per browser profile: lets App Insights group events by
+    // device. It identifies the tablet, not a person.
+    function deviceId() {
+      try {
+        var d = localStorage.getItem(DEVICE_KEY);
+        if (!d) { d = randomId(); localStorage.setItem(DEVICE_KEY, d); }
+        return d;
+      } catch (e) { return ""; }
+    }
+
+    function cleanFields(raw) {
+      var out = {};
+      if (!raw || typeof raw !== "object") return out;
+      for (var k in raw) {
+        if (!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+        var v = raw[k];
+        if (v === null || v === undefined || v === "") continue;
+        if (typeof v === "object") continue;
+        out[k] = String(v).slice(0, 300);
+      }
+      return out;
+    }
+
+    function scheduleFlush(delayMs) {
+      try {
+        if (flushTimer) return;
+        flushTimer = setTimeout(function () { flushTimer = null; flush(); }, delayMs);
+      } catch (e) {}
+    }
+
+    function event(name, fields, level) {
+      try {
+        var f = cleanFields(typeof fields === "function" ? fields() : fields);
+        // What this device had loaded for the program at the time: the most
+        // common question when a person "is not found". Read-only, from the
+        // keys fsp_admin.html already writes after a sync.
+        if (f.program_id) {
+          var synced = localStorage.getItem("scandroid_last_synced_date_" + f.program_id);
+          var count = localStorage.getItem("scandroid_last_synced_count_" + f.program_id);
+          if (synced) f.device_last_synced = synced;
+          if (count) f.device_record_count = count;
+        }
+        var q = readQueue();
+        q.push({
+          i: randomId(),
+          e: String(name).slice(0, 64),
+          l: level || "info",
+          t: new Date().toISOString(),
+          p: location.pathname,
+          o: navigator.onLine ? 1 : 0,
+          f: f
+        });
+        writeQueue(q);
+        if (navigator.onLine) scheduleFlush(3000);
+      } catch (e) {}
+    }
+
+    // Describes a scanned value without recording it.
+    function idShape(value) {
+      try {
+        var s = String(value == null ? "" : value).trim();
+        var kind = "other";
+        if (/^https?:\/\//i.test(s)) kind = "url";
+        else if (/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(s)) kind = "uuid";
+        else if (/^\d+$/.test(s)) kind = "digits";
+        else if (/^[A-Za-z0-9_-]+$/.test(s)) kind = "alphanumeric";
+        return { id_length: s.length, id_kind: kind };
+      } catch (e) { return {}; }
+    }
+
+    function send(batch, swCaches) {
+      return fetch("/api/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        keepalive: true,
+        body: JSON.stringify({ device: deviceId(), sw_cache: swCaches, events: batch })
+      });
+    }
+
+    function flush() {
+      try {
+        if (flushing || !navigator.onLine || !window.fetch) return;
+        var q = readQueue();
+        if (!q.length) return;
+        var batch = q.slice(0, MAX_BATCH);
+        flushing = true;
+        // The service-worker cache version tells us whether a device is still
+        // running old cached pages.
+        var cachesP = (window.caches && caches.keys) ? caches.keys() : Promise.resolve([]);
+        cachesP
+          .catch(function () { return []; })
+          .then(function (keys) {
+            var sw = (keys || []).filter(function (k) { return /^scandroid-cache-/.test(k); }).join(",");
+            return send(batch, sw);
+          })
+          .then(function (res) {
+            // Accepted, or rejected as malformed: drop the batch either way.
+            // 401 (nobody logged in) or a server error: keep it for later.
+            if (res.ok || res.status === 400 || res.status === 413) {
+              var sent = {};
+              batch.forEach(function (x) { sent[x.i] = true; });
+              writeQueue(readQueue().filter(function (x) { return !sent[x.i]; }));
+              if (res.ok && q.length > batch.length) scheduleFlush(1000);
+            }
+          })
+          .catch(function () {})
+          .then(function () { flushing = false; });
+      } catch (e) { flushing = false; }
+    }
+
+    // Uncaught script errors on the page (capped, and never handled here:
+    // the browser's own behaviour is unchanged).
+    function onError(message, source, line) {
+      try {
+        if (jsErrors >= MAX_JS_ERRORS) return;
+        jsErrors += 1;
+        event("js.error", {
+          message: String(message || "").slice(0, 200),
+          source: String(source || "").split("?")[0].split("/").pop(),
+          line: line
+        }, "error");
+      } catch (e) {}
+    }
+    window.addEventListener("error", function (ev) {
+      try { onError(ev && ev.message, ev && ev.filename, ev && ev.lineno); } catch (e) {}
+    });
+    window.addEventListener("unhandledrejection", function (ev) {
+      try {
+        var r = ev && ev.reason;
+        onError("Unhandled promise rejection: " + ((r && (r.name + ": " + r.message)) || String(r)), "", "");
+      } catch (e) {}
+    });
+
+    window.addEventListener("online", function () { scheduleFlush(2000); });
+    window.addEventListener("load", function () { scheduleFlush(1500); });
+
+    window.ScanLog = { event: event, idShape: idShape, flush: flush };
+  } catch (e) {}
+})();
+</script>

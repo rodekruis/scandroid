@@ -1,31 +1,35 @@
-# --- Application Insights / Azure Monitor setup -----------------------------
-# This script is launched as a subprocess by app.py and inherits the
-# APPLICATIONINSIGHTS_CONNECTION_STRING env var. It reports telemetry as its
-# own process. Configure before the instrumented "requests" library is used.
+# --- Telemetry (must stay first) --------------------------------------------
+# This script is launched as a subprocess by app.py (/sync-fsp) and reports to
+# Application Insights as its own process (component="sync"), with the job id
+# app.py passes in SYNC_JOB_ID so one sync can be followed across both
+# processes. Logging conventions are documented at the top of telemetry.py.
+#
+# stdout keeps a bare "message only" format: app.py reads this script's stdout
+# line by line to drive the progress bar, so the wording of the [INFO] and
+# [PROGRESS] lines must not change without updating the regexes in app.py.
+#
+# This replaces a setup that called logging.basicConfig() AFTER
+# configure_azure_monitor(). basicConfig is a no-op once the root logger has a
+# handler, so the root stayed at WARNING and INFO lines were dropped.
 import os
 import sys
 import logging
 
-# Azure Monitor telemetry is only used in the cloud deployment, where the
-# connection string is provided via env var. Import it lazily and only when
-# that string is present, so local dev runs (which don't have
-# azure-monitor-opentelemetry installed) don't crash the sync subprocess at
-# import time. If you *do* want telemetry locally: pip install azure-monitor-opentelemetry
-if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
-    try:
-        from azure.monitor.opentelemetry import configure_azure_monitor
-        configure_azure_monitor()
-    except ImportError:
-        logging.getLogger(__name__).warning(
-            "azure-monitor-opentelemetry not installed; skipping telemetry."
-        )
+import telemetry
 
-# Log to stdout with a bare "message only" format so the parent process
-# (app.py /sync-fsp) can keep scanning this script's stdout for its status
-# lines exactly as it did with print(). App Insights export is handled by the
-# separate handler that configure_azure_monitor() attaches to the root logger.
-logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(message)s")
-logger = logging.getLogger(__name__)
+telemetry.setup(
+    component="sync",
+    stream_format="%(message)s",
+    static_dims={
+        "program_id": os.environ.get("PROGRAM_ID"),
+        "job_id": os.environ.get("SYNC_JOB_ID"),
+    },
+)
+logger = logging.getLogger("scandroid.sync.worker")
+# Uncaught exceptions (IncompleteSyncError, a failed 121 login at import time,
+# a missing program) used to reach stderr only. Now they reach App Insights
+# too; the stderr traceback app.py shows the user is unchanged.
+telemetry.install_excepthook(logger)
 # ----------------------------------------------------------------------------
 
 import os
@@ -639,7 +643,7 @@ def fetch_registrations_bulk(program_id, registration_ids):
             # frozen progress bar.
             done += 1
             if done % 25 == 0 or done == total:
-                logger.info(f"[PROGRESS] registrations {done}/{total}")
+                logger.info(f"[PROGRESS] registrations {done}/{total}", extra=telemetry.dims(stdout_only=True))
 
     logger.info("[INFO] Registrations: %s requested, %s fetched, %s failed",
                 len(unique_ids), len(results), len(failed_ids))
@@ -697,7 +701,7 @@ def download_and_encrypt_photo(uuid, save_path):
     photo_url = submission.get(photo_url_field)
 
     if photo_url:
-        logger.info(f"[OK] Direct Kobo photo URL found for UUID {uuid}: {photo_url}")
+        logger.debug(f"[OK] Direct Kobo photo URL found for UUID {uuid}: {photo_url}")
 
         # Use smaller 'medium' image instead of original
         photo_url = photo_url.replace("/original/", "/medium/")
@@ -711,7 +715,7 @@ def download_and_encrypt_photo(uuid, save_path):
         with open(save_path, "wb") as f:
             f.write(encrypted_bytes)
 
-        logger.info(f"[OK] Photo downloaded & encrypted (direct URL) for UUID {uuid}")
+        logger.debug(f"[OK] Photo downloaded & encrypted (direct URL) for UUID {uuid}")
         return True
 
     # --- 3) Fallback: match against _attachments (older Kobo submissions) ---
@@ -753,13 +757,13 @@ def download_and_encrypt_photo(uuid, save_path):
 
     if direct_url:
         file_url = direct_url.replace("/original/", "/medium/")
-        logger.info(f"[OK] Using direct download_url for UUID {uuid}: {file_url[:80]}")
+        logger.debug(f"[OK] Using direct download_url for UUID {uuid}: {file_url[:80]}")
     elif attach_uid:
         file_url = (
             f"{KOBO_BASE}/api/v2/assets/{ASSET_ID}/data/"
             f"{submission_id}/attachments/{attach_uid}/?view=medium"
         )
-        logger.info(f"[OK] Using constructed IFRC URL for UUID {uuid}: {file_url[:80]}")
+        logger.debug(f"[OK] Using constructed IFRC URL for UUID {uuid}: {file_url[:80]}")
     else:
         logger.warning(f"[!] No download URL or UID for attachment (UUID {uuid})")
         return False
@@ -779,7 +783,7 @@ def download_and_encrypt_photo(uuid, save_path):
     with open(save_path, "wb") as f:
         f.write(encrypted_bytes)
 
-    logger.info(f"[OK] Photo downloaded & encrypted for UUID {uuid}")
+    logger.debug(f"[OK] Photo downloaded & encrypted for UUID {uuid}")
     return True
 
 
@@ -823,7 +827,7 @@ def download_photos_bulk(records, photos_dir):
             # this is what actually drives the progress bar in fsp_admin.html.
             done += 1
             if done % 10 == 0 or done == total:
-                logger.info(f"[PROGRESS] photos {done}/{total}")
+                logger.info(f"[PROGRESS] photos {done}/{total}", extra=telemetry.dims(stdout_only=True))
 
     if failed:
         logger.error("[!] %s of %s photo(s) could not be downloaded — those "

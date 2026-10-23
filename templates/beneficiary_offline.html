@@ -77,6 +77,7 @@
       footer { flex-direction:column; text-align:center; gap:4px; font-size:0.8rem; padding:10px; }
     }
   </style>
+{% include "_client_log.html" %}
 </head>
 <body>
 
@@ -200,6 +201,9 @@
     const LANG=_params.get('lang')||"{{ lang }}";
     const SCANNED_ID=_params.get('uuid')||"{{ uuid or '' }}";
     const ACTIVE_PROGRAM_ID=_params.get('program_id')||"{{ program_id or '' }}";
+    // Telemetry (templates/_client_log.html). Never throws, never blocks, and
+    // never records beneficiary data.
+    function benEvent(name,level,extra){ window.ScanLog&&ScanLog.event(name,function(){ return Object.assign({program_id:ACTIVE_PROGRAM_ID},extra?extra():{}); },level); }
     let fieldsConfig={{ display_fields|tojson }};
     let photoEnabled={{ (photo_config and photo_config.enabled)|tojson }};
     const SERVER_FERNET_KEY="{{ fernet_key or '' }}";
@@ -296,11 +300,11 @@
       const keyB64=SERVER_FERNET_KEY||"";
       if(keyB64)keyBadge.style.display='inline-block';
       if(!SCANNED_ID){fieldsEl.innerHTML='<div class="note">No ID provided.</div>';return;}
-      let db; try{db=await openDB();}catch(e){fieldsEl.innerHTML='<div class="note">'+((e&&e.message)?e.message:'IndexedDB unavailable.')+'</div>';return;}
+      let db; try{db=await openDB();}catch(e){benEvent('beneficiary.db_unavailable','error',function(){return {error:e&&e.name};});fieldsEl.innerHTML='<div class="note">'+((e&&e.message)?e.message:'IndexedDB unavailable.')+'</div>';return;}
       try{
         const sc=await dbGet(db,'meta','displayConfig');
         if(sc&&sc.value){const cfg=sc.value,pc=cfg.programs?(cfg.programs[ACTIVE_PROGRAM_ID]||cfg):cfg; if(Array.isArray(pc.fields)&&pc.fields.length)fieldsConfig=pc.fields; if(pc.photo!==undefined)photoEnabled=!!pc.photo.enabled;}
-      }catch(e){console.warn('displayConfig load failed:',e);}
+      }catch(e){console.warn('displayConfig load failed:',e);benEvent('beneficiary.config_read_failed','warning',function(){return {what:'displayConfig',error:e&&e.name};});}
       // Only a definite `false` removes the editable fields — anything else
       // (missing key, unreadable store) leaves the page as it is today.
       // Falls back to the older canUpdatePayments key so a device that has not
@@ -309,19 +313,19 @@
         let perm=await dbGet(db,'meta',`canEditFields:${ACTIVE_PROGRAM_ID}`);
         if(!perm)perm=await dbGet(db,'meta',`canUpdatePayments:${ACTIVE_PROGRAM_ID}`);
         if(perm&&perm.value===false)CAN_EDIT_FIELDS=false;
-      }catch(e){console.warn('field-edit permission load failed:',e);}
+      }catch(e){console.warn('field-edit permission load failed:',e);benEvent('beneficiary.config_read_failed','warning',function(){return {what:'canEditFields',error:e&&e.name};});}
       // Separate question, separate key — see CAN_RECORD_PAYMENT above.
       // Applied before loadPayments() so nothing can re-show the button.
       try{
         const pp=await dbGet(db,'meta',`canUpdatePayments:${ACTIVE_PROGRAM_ID}`);
         if(pp&&pp.value===false)CAN_RECORD_PAYMENT=false;
-      }catch(e){console.warn('payment permission load failed:',e);}
+      }catch(e){console.warn('payment permission load failed:',e);benEvent('beneficiary.config_read_failed','warning',function(){return {what:'canUpdatePayments',error:e&&e.name};});}
       if(!CAN_RECORD_PAYMENT)applyVerifyOnlyMode();
       let rec=await dbGet(db,'records',scopedUUID(String(SCANNED_ID)));
       if(!rec){const idx=await dbGet(db,'meta','idIndex');const map=idx&&idx.value||{};const n=String(SCANNED_ID);const mu=map['uuid:'+n]||map['kobo:'+n]||map['reg:'+n];if(mu)rec=await dbGet(db,'records',scopedUUID(mu));}
       if(!rec)rec=await dbFindRecordByAnyId(db,SCANNED_ID);
-      if(!rec){fieldsEl.innerHTML='<div class="note">No offline record found for this beneficiary.</div>';if(photoMsg)photoMsg.textContent='No photo found in cache.';return;}
-      if(rec.valid===false){window.location.href=`/invalid-qr?reason=${encodeURIComponent(rec.reason||"Invalid QR")}&lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;return;}
+      if(!rec){benEvent('beneficiary.record_not_found','warning');fieldsEl.innerHTML='<div class="note">No offline record found for this beneficiary.</div>';if(photoMsg)photoMsg.textContent='No photo found in cache.';return;}
+      if(rec.valid===false){benEvent('beneficiary.invalid','warning',function(){return {reason:rec.reason};});window.location.href=`/invalid-qr?reason=${encodeURIComponent(rec.reason||"Invalid QR")}&lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;return;}
       renderFields(fieldsEl,rec.data||{},keyB64);
       // Load all tranches (payments) for this beneficiary and let the FSP pick
       // which one they are distributing. A person may have several concurrent
@@ -334,14 +338,14 @@
         try{
           const rawPhotoUuid=ACTIVE_PROGRAM_ID&&rec.uuid.startsWith(ACTIVE_PROGRAM_ID+':')?rec.uuid.slice(ACTIVE_PROGRAM_ID.length+1):rec.uuid; const p=await dbGet(db,'photos',scopedUUID(rawPhotoUuid));
           if(p&&(p.bytes||p.blob)){
-            if(!keyB64){if(photoBadge)photoBadge.textContent='📦 Encrypted photo cached';if(photoMsg)photoMsg.textContent='Encrypted — no key set';}
+            if(!keyB64){benEvent('photo.no_key','warning');if(photoBadge)photoBadge.textContent='📦 Encrypted photo cached';if(photoMsg)photoMsg.textContent='Encrypted — no key set';}
             else{
               let blob=null;
               try{ let tok; if(p.blob&&typeof p.blob.text==='function'){tok=await p.blob.text();}else if(p.bytes){tok=new TextDecoder().decode(p.bytes instanceof Uint8Array?p.bytes:new Uint8Array(p.bytes));} if(tok&&tok.length>40){blob=new Blob([await fernetDecryptToBytes(tok.trim(),keyB64)],{type:'image/jpeg'});}else throw new Error('not token'); }catch(e1){ const enc=p.blob?new Uint8Array(await p.blob.arrayBuffer()):(p.bytes instanceof Uint8Array?p.bytes:new Uint8Array(p.bytes||[])); blob=await fernetDecryptBlob(enc,keyB64); }
               imgEl.src=URL.createObjectURL(blob); imgEl.style.display='block'; if(photoMsg)photoMsg.textContent=''; if(photoBadge)photoBadge.textContent='';
             }
-          }else{if(photoMsg)photoMsg.textContent='No photo found in cache.';}
-        }catch(e){if(photoMsg)photoMsg.textContent='Photo decryption failed.';}
+          }else{benEvent('photo.missing','warning');if(photoMsg)photoMsg.textContent='No photo found in cache.';}
+        }catch(e){benEvent('photo.decrypt_failed','error',function(){return {error:e&&e.name};});if(photoMsg)photoMsg.textContent='Photo decryption failed.';}
       }
     }
 
@@ -418,7 +422,7 @@
         MATCH_VALUE=rawVal;
         if(looksEncrypted(rawVal)&&SERVER_FERNET_KEY){
           try{ MATCH_VALUE=await fernetDecryptString(rawVal,SERVER_FERNET_KEY); }
-          catch(e){ console.warn('match value decryption failed',e); MATCH_VALUE=''; }
+          catch(e){ console.warn('match value decryption failed',e); benEvent('beneficiary.match_value_decrypt_failed','error',function(){return {payment_id:t&&t.paymentId,match_column:MATCH_COL,error:e&&e.name};}); MATCH_VALUE=''; }
         }
         // An encrypted empty string decrypts cleanly to "" — a valid token with
         // no value behind it. Treat that as missing.
@@ -442,8 +446,8 @@
       // time with different columns.
       // Gather this beneficiary's tranches and the ones already collected.
       let tranches=[], paid=[];
-      try{ tranches=await getAllByIndexKeyPrefix(db,'transaction',scoped); }catch(e){console.warn('tranche load failed',e);}
-      try{ paid=await getAllByIndexKeyPrefix(db,'payments',scoped); }catch(e){console.warn('payments load failed',e);}
+      try{ tranches=await getAllByIndexKeyPrefix(db,'transaction',scoped); }catch(e){console.warn('tranche load failed',e);benEvent('beneficiary.payments_read_failed','error',function(){return {what:'transaction',error:e&&e.name};});}
+      try{ paid=await getAllByIndexKeyPrefix(db,'payments',scoped); }catch(e){console.warn('payments load failed',e);benEvent('beneficiary.payments_read_failed','error',function(){return {what:'payments',error:e&&e.name};});}
       const paidIds=new Set(paid.map(p=>String(p.paymentId)));
 
       // Fallback: pre-v14 cache or no transaction rows — use the record amount
@@ -558,17 +562,19 @@
           try{
             const pp=await dbGet(db,'meta',`canUpdatePayments:${ACTIVE_PROGRAM_ID}`);
             if(pp&&pp.value===false){
+              benEvent('decision.blocked_read_only','warning');
               CAN_RECORD_PAYMENT=false;
               applyVerifyOnlyMode();
               note.textContent=RO_NOTE;
               return;
             }
-          }catch(e){console.warn('payment permission re-check failed:',e);}
+          }catch(e){console.warn('payment permission re-check failed:',e);benEvent('beneficiary.config_read_failed','warning',function(){return {what:'canUpdatePayments (re-check)',error:e&&e.name};});}
         }
 
         const rec=await dbFindRecordByAnyId(db,SCANNED_ID);
-        if(!rec){alert("No matching record found.");return;}
+        if(!rec){benEvent('decision.record_not_found','error');alert("No matching record found.");return;}
         if(!MATCH_COL){
+          benEvent('decision.match_column_unknown','error',function(){return {payment_id:SELECTED_PAYMENT_ID};});
           alert(
             `The matching field for this payment is unknown on this device, so ` +
             `the payment cannot be reconciled in 121.\n\n` +
@@ -577,6 +583,7 @@
           return;
         }
         if(!MATCH_VALUE){
+          benEvent('decision.match_value_missing','error',function(){return {payment_id:SELECTED_PAYMENT_ID,match_column:MATCH_COL};});
           // Re-syncing does NOT fix this: the bundle would be rebuilt with the
           // same empty value. Name the field so it can be corrected in 121.
           alert(
@@ -619,9 +626,9 @@
           edits: edits,
           timestamp: new Date().toISOString()
         });
-        tx.oncomplete=()=>{ note.textContent=`✅ Saved`; setTimeout(()=>{window.location.href=`/success-offline?lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;},600); };
-        tx.onerror=()=>{note.textContent="❌ Failed to save locally.";};
-      }catch(err){console.error(err);note.textContent="❌ Unexpected error.";}
+        tx.oncomplete=()=>{ benEvent('decision.saved','info',function(){return {status:decisionValue,payment_id:SELECTED_PAYMENT_ID,edited_fields:Object.keys(edits).length};}); note.textContent=`✅ Saved`; setTimeout(()=>{window.location.href=`/success-offline?lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;},600); };
+        tx.onerror=()=>{benEvent('decision.save_failed','error',function(){return {error:tx.error&&tx.error.name};});note.textContent="❌ Failed to save locally.";};
+      }catch(err){console.error(err);benEvent('decision.unexpected_error','error',function(){return {error:err&&err.name,message:err&&err.message};});note.textContent="❌ Unexpected error.";}
     }
 
     document.addEventListener('DOMContentLoaded',()=>{
@@ -632,7 +639,7 @@
       // unguarded call here would throw and take the Reject listener with it.
       const _approve=document.getElementById("approveBtn");
       if(_approve)_approve.addEventListener("click",()=>savePaymentDecision("success"));
-      document.getElementById("rejectBtn").addEventListener("click",()=>{window.location.href=`/success-offline?lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;});
+      document.getElementById("rejectBtn").addEventListener("click",()=>{benEvent('decision.rejected','info');window.location.href=`/success-offline?lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;});
     });
 </script>
 </body>

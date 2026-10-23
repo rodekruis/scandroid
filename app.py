@@ -1,3 +1,74 @@
+# --- Telemetry (must stay first) ---------------------------------------------
+# Azure Monitor instruments Flask by replacing the Flask class, so this has to
+# run before Flask is imported or no request telemetry is sent. Conventions for
+# logging in this codebase are documented at the top of telemetry.py.
+import logging
+import telemetry
+
+telemetry.setup(component="web")
+
+log_auth = logging.getLogger("scandroid.auth")          # logins, operator attribution
+log_121 = logging.getLogger("scandroid.api121")         # calls to the 121 API
+log_kobo = logging.getLogger("scandroid.kobo")          # calls to Kobo
+log_config = logging.getLogger("scandroid.config")      # program / system config
+log_sync = logging.getLogger("scandroid.sync")          # offline cache sync orchestration
+log_payments = logging.getLogger("scandroid.payments")  # reconciliation and registration updates
+log_scan = logging.getLogger("scandroid.scan")          # scan page
+log_vouchers = logging.getLogger("scandroid.vouchers")  # voucher upload and PDF
+
+
+# Helpers for the logging added alongside existing code paths. They are written
+# so that they can never raise: logging must not change what a route returns.
+def _log_rejected(logger, what, reason, level=logging.WARNING, **extra):
+    """A route turned a request away (bad input, missing setup, no data)."""
+    try:
+        logger.log(
+            level,
+            "%s rejected: %s",
+            what,
+            reason,
+            extra=telemetry.dims(event="request.rejected", reason=reason, **extra),
+        )
+    except Exception:
+        pass
+
+
+def _log_service_login(resp, where):
+    """Pages log in to 121 with the service account to fill dropdowns and
+    titles. A failed login used to leave them silently empty."""
+    try:
+        if resp.status_code != 201:
+            log_121.warning(
+                "Service-account login to 121 returned HTTP %s on %s; the page "
+                "is shown without 121 data.",
+                resp.status_code,
+                where,
+                extra=telemetry.dims(
+                    event="api121.service_login_failed",
+                    status_code=resp.status_code,
+                    page=where,
+                ),
+            )
+    except Exception:
+        pass
+
+
+def _log_config_load_failure(exc, what):
+    """load_config()/load_display_config() failed and the page fell back to an
+    empty config. config_loader raises on purpose (e.g. a secret it cannot
+    decrypt), so this is always worth an ERROR."""
+    try:
+        log_config.error(
+            "Could not load %s; continuing with an empty one: %s",
+            what,
+            telemetry.describe(exc),
+            exc_info=exc,
+            extra=telemetry.dims(event="config.load_failed", config=what),
+        )
+    except Exception:
+        pass
+# ------------------------------------------------------------------------------
+
 from flask import (
     Flask,
     render_template,
@@ -282,13 +353,50 @@ app = Flask(__name__)
 # staff would appear to be logged out at random, so warn loudly.
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.urandom(32).hex()
 if not os.getenv("FLASK_SECRET_KEY"):
-    print(
-        "[auth] WARNING: FLASK_SECRET_KEY is not set - a random key was generated. "
-        "Set it in Azure App Settings or logins will drop unpredictably."
+    log_auth.warning(
+        "FLASK_SECRET_KEY is not set - a random key was generated. "
+        "Set it in Azure App Settings or logins will drop unpredictably.",
+        extra=telemetry.dims(event="startup.secret_key_missing"),
     )
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_PERMANENT"] = False
 Session(app)
+
+
+# Every log line written while handling a request carries who/where it came
+# from as App Insights custom dimensions. Computed once per request here and
+# read by telemetry's log filter (which must never touch the session itself).
+@app.before_request
+def _telemetry_request_dims():
+    from flask import g
+
+    try:
+        if session.get("fsp_logged_in"):
+            role = "fsp"
+        elif session.get("admin_logged_in"):
+            role = "admin"
+        else:
+            role = None
+        g.log_dims = telemetry.dims(
+            route=request.endpoint,
+            method=request.method,
+            role=role,
+            actor=session.get(role + "_username") if role else None,
+            program_id=session.get("fsp_program_id") if role == "fsp" else None,
+        )
+    except Exception:
+        g.log_dims = {}
+
+
+def _telemetry_context():
+    from flask import g, has_request_context
+
+    if has_request_context():
+        return g.get("log_dims")
+    return None
+
+
+telemetry.set_context_provider(_telemetry_context)
 
 
 @app.context_processor
@@ -715,7 +823,8 @@ def resolve_programs(system_config=None):
     if system_config is None:
         try:
             system_config = load_config()
-        except Exception:
+        except Exception as _cfg_err:
+            _log_config_load_failure(_cfg_err, "system config")
             system_config = {}
 
     programs_raw = system_config.get("PROGRAMS", [])
@@ -732,6 +841,7 @@ def resolve_programs(system_config=None):
                 },
                 timeout=10,
             )
+            _log_service_login(login_resp, "program list (vouchers)")
             if login_resp.status_code == 201:
                 token = login_resp.json().get("access_token_general")
                 cookies = {"access_token_general": token}
@@ -749,12 +859,15 @@ def resolve_programs(system_config=None):
                             title = titles.get("en") or next(
                                 iter(titles.values()), title
                             )
-                    except Exception:
-                        pass
+                    except Exception as _title_err:
+                        telemetry.log_failure(
+                            log_121, "Program title lookup failed; showing the program id instead",
+                            _title_err, program_id=pid,
+                        )
                     programs.append({"id": str(pid), "title": title})
                     lookup[str(pid)] = p
         except Exception as e:
-            print("Program title lookup failed:", e)
+            telemetry.log_failure(log_121, "Program title lookup failed (resolve_programs)", e)
 
     # Fallback: ids only
     if not programs:
@@ -786,7 +899,8 @@ def load_voucher_designs():
     """All per-program voucher designs stored in display_config.json."""
     try:
         cfg = load_display_config()
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "display config")
         cfg = {}
     return (cfg or {}).get("voucher_designs", {}) or {}
 
@@ -981,9 +1095,6 @@ translations = {
     "payment_submit_success": "✅ Payments submitted successfully!",
     "payment_submit_failed": "❌ Failed to submit",
     "no_payments": "No payments ready to send.",
-    "payment_send_error_reconcile": "Error sending payments, please forward this file to the finance manager.",
-    "download_reconciliation_csv": "Download CSV for manual reconciliation",
-    "payment_send_partial_count": "{failed} of {total} payments could not be sent to 121.",
 
     # ---- beneficiary_offline.html ----
     "title": "Beneficiary Information",
@@ -1213,9 +1324,6 @@ translations = {
     "payment_submit_success": "✅ Paiements envoyés avec succès !",
     "payment_submit_failed": "❌ Échec de l'envoi",
     "no_payments": "Aucun paiement prêt à envoyer.",
-    "payment_send_error_reconcile": "Erreur lors de l'envoi des paiements, veuillez transmettre ce fichier au responsable financier.",
-    "download_reconciliation_csv": "Télécharger le CSV pour le rapprochement manuel",
-    "payment_send_partial_count": "{failed} paiement(s) sur {total} n'ont pas pu être envoyés à 121.",
 
     # ---- beneficiary_offline.html ----
     "title": "Informations sur le bénéficiaire",
@@ -1430,9 +1538,6 @@ translations = {
     "payment_submit_success": "✅ تم إرسال المدفوعات بنجاح!",
     "payment_submit_failed": "❌ فشل الإرسال",
     "no_payments": "لا توجد مدفوعات جاهزة للإرسال.",
-    "payment_send_error_reconcile": "حدث خطأ أثناء إرسال المدفوعات، يرجى إرسال هذا الملف إلى المدير المالي.",
-    "download_reconciliation_csv": "تنزيل ملف CSV للتسوية اليدوية",
-    "payment_send_partial_count": "تعذّر إرسال {failed} من أصل {total} من المدفوعات إلى 121.",
 
     # ---- beneficiary_offline.html ----
     "title": "معلومات المستفيد",
@@ -1573,6 +1678,7 @@ def admin_login():
     config = load_config()
     base_url = config.get("url121")
     if not base_url:
+        _log_rejected(log_auth, "Admin login", "url121_not_configured", level=logging.ERROR, role="admin", actor=username)
         return render_template(
             "admin_login.html",
             lang=lang,
@@ -1586,8 +1692,12 @@ def admin_login():
     try:
         res = requests.post(login_url, json=login_payload, timeout=10)
 
-    except Exception:
+    except Exception as _login_err:
         # API unreachable
+        telemetry.log_failure(
+            log_auth, "Admin login: could not reach 121", _login_err, level=logging.ERROR,
+            event="auth.login_unreachable", role="admin", actor=username,
+        )
         return render_template(
             "admin_login.html",
             lang=lang,
@@ -1598,10 +1708,15 @@ def admin_login():
     # ✔ Success
     if res.status_code == 201:
         _store_login_session("admin", username, res)
+        log_auth.info("Admin login succeeded", extra=telemetry.dims(event="auth.login_succeeded", role="admin", actor=username))
         return redirect(url_for("admin_dashboard", lang=lang))
 
     # ❌ Wrong username/password
     if res.status_code in (400, 401):
+        log_auth.warning(
+            "Admin login rejected by 121 (HTTP %s)", res.status_code,
+            extra=telemetry.dims(event="auth.login_rejected", role="admin", actor=username, status_code=res.status_code),
+        )
         return render_template(
             "admin_login.html",
             lang=lang,
@@ -1610,6 +1725,10 @@ def admin_login():
         )
 
     # ❌ Any other response
+    log_auth.error(
+        "Admin login failed: 121 answered HTTP %s", res.status_code,
+        extra=telemetry.dims(event="auth.login_failed", role="admin", actor=username, status_code=res.status_code),
+    )
     return render_template(
         "admin_login.html", lang=lang, t=t, error=f"Login failed ({res.status_code})."
     )
@@ -1631,6 +1750,7 @@ def admin_dashboard():
 @app.route("/admin-logout")
 def admin_logout():
     lang = request.args.get("lang", "en")
+    log_auth.info("Admin logged out", extra=telemetry.dims(event="auth.logout", role="admin"))
     _clear_login_session("admin")
     return redirect(url_for("admin_login", lang=lang))
 
@@ -1694,7 +1814,10 @@ def system_config():
                     entry["koboFormName"] = j.get("name")
                     entry["koboFormOwner"] = j.get("owner__username")
             except Exception as e:
-                print("Kobo validation error:", e)
+                telemetry.log_failure(
+                    log_kobo, "Kobo asset validation failed", e,
+                    program_id=pid, kobo_asset_id=asset_id,
+                )
 
             programs.append(entry)
 
@@ -1722,12 +1845,13 @@ def system_config():
                 f"{url121}/api/users/login",
                 json={"username": username121, "password": password121},
             )
+            _log_service_login(r, "system config page")
             if r.status_code == 201:
                 j = r.json()
                 token = j.get("access_token_general")
                 program_ids = [int(pid) for pid in j.get("permissions", {}).keys()]
         except Exception as e:
-            print("121 login failed:", e)
+            telemetry.log_failure(log_121, "Service-account login to 121 failed (system config page)", e)
 
     # ---- Load program titles ----
     if token:
@@ -1745,7 +1869,7 @@ def system_config():
                     )
                     program_options.append({"id": pid, "title": title})
             except Exception as e:
-                print(f"Program load failed ({pid}):", e)
+                telemetry.log_failure(log_121, "Program load failed (system config page)", e, program_id=pid)
 
     # Existing mappings for UI
     program_mappings = config.get("PROGRAMS", [])
@@ -1778,7 +1902,7 @@ def verify_kobo_token():
         try:
             r = requests.get(f"{server}{path}", headers=headers, timeout=10)
         except Exception as e:
-            print("Kobo verify failed:", e)
+            telemetry.log_failure(log_kobo, "Kobo token verification could not reach the server", e, kobo_server=server)
             return jsonify({"ok": False, "error": "Could not reach the server."}), 200
 
         if r.status_code == 200:
@@ -1821,6 +1945,7 @@ def api_program_attributes(program_id):
             timeout=10,
         )
 
+        _log_service_login(login_resp, "registration attributes")
         if login_resp.status_code == 201:
             token = login_resp.json().get("access_token_general")
             cookies = {"access_token_general": token}
@@ -1839,7 +1964,7 @@ def api_program_attributes(program_id):
                     attributes.append({"name": name, "label": label})
 
     except Exception as e:
-        print(f"[api_program_attributes] Error: {e}")
+        telemetry.log_failure(log_121, "Could not load 121 registration attributes", e, program_id=program_id)
 
     # Kobo image fields for this program
     try:
@@ -1886,7 +2011,7 @@ def api_program_attributes(program_id):
                         if name:
                             kobo_image_fields.append({"name": name, "label": label})
     except Exception as e:
-        print(f"[api_program_attributes] Kobo error: {e}")
+        telemetry.log_failure(log_kobo, "Could not load Kobo image fields", e, program_id=program_id)
 
     return jsonify({"attributes": attributes, "kobo_image_fields": kobo_image_fields})
 
@@ -1927,13 +2052,15 @@ def config_page():
     # Load display config
     try:
         config_data = load_display_config()
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "display config")
         config_data = {}
 
     # Load system config
     try:
         system_config = load_config()
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "system config")
         system_config = {}
 
     programs_raw = system_config.get("PROGRAMS", [])
@@ -1955,6 +2082,7 @@ def config_page():
                 },
             )
 
+            _log_service_login(login_resp, "program config page")
             if login_resp.status_code == 201:
                 token = login_resp.json().get("access_token_general")
                 cookies = {"access_token_general": token}
@@ -1972,14 +2100,17 @@ def config_page():
                             title = titles.get("en") or next(
                                 iter(titles.values()), title
                             )
-                    except Exception:
-                        pass
+                    except Exception as _title_err:
+                        telemetry.log_failure(
+                            log_121, "Program title lookup failed; showing the program id instead",
+                            _title_err, program_id=pid,
+                        )
 
                     programs.append({"id": str(pid), "title": title})
                     program_lookup[str(pid)] = p
 
         except Exception as e:
-            print("Program title lookup failed:", e)
+            telemetry.log_failure(log_121, "Program title lookup failed (config page)", e)
 
     # Safety fallback
     if not programs:
@@ -2046,6 +2177,7 @@ def config_page():
                 },
             )
 
+            _log_service_login(login_resp, "program config page")
             if login_resp.status_code == 201:
                 token = login_resp.json().get("access_token_general")
                 cookies = {"access_token_general": token}
@@ -2064,12 +2196,13 @@ def config_page():
                         column_to_match_121 = _unique[0]
                     elif len(_unique) > 1:
                         column_to_match_121 = None
-                        print(
-                            f"[config] program {program_id} has per-FSP match "
-                            f"columns {_map} — resolved per payment at sync time."
+                        log_config.info(
+                            "Program %s has per-FSP match columns %s - resolved per payment at sync time.",
+                            program_id, _map,
+                            extra=telemetry.dims(program_id=program_id),
                         )
                 except Exception as e:
-                    print(f"[config] fsp-configurations lookup failed: {e}")
+                    telemetry.log_failure(log_121, "fsp-configurations lookup failed (config page)", e, program_id=program_id)
 
                 # Registration attributes
                 try:
@@ -2090,11 +2223,14 @@ def config_page():
                             )
 
                             allowed_attributes.append({"name": name, "label": label})
-                except Exception:
-                    pass
+                except Exception as _attr_err:
+                    telemetry.log_failure(
+                        log_121, "Could not load 121 registration attributes (config page)",
+                        _attr_err, program_id=program_id,
+                    )
 
         except Exception as e:
-            print("121 lookup failed:", e)
+            telemetry.log_failure(log_121, "121 lookup failed (config page)", e, program_id=program_id)
 
     # ------------------------------------------------------
     # Strict mode – drop invalid fields per program
@@ -2115,10 +2251,14 @@ def config_page():
             _lookup_key = _lookup.get("field")
             if _lookup_key and _lookup_key != "referenceId" \
                     and _lookup_key not in allowed_names:
-                print(
-                    f"[config] program {active_program_id}: lookup field "
-                    f"'{_lookup_key}' is not a 121 attribute — reverting to "
-                    "referenceId."
+                log_config.warning(
+                    "Program %s: lookup field '%s' is not a 121 attribute - reverting to referenceId.",
+                    active_program_id, _lookup_key,
+                    extra=telemetry.dims(
+                        event="config.lookup_field_reverted",
+                        program_id=active_program_id,
+                        lookup_field=_lookup_key,
+                    ),
                 )
                 pdata["lookup"] = {"field": "referenceId"}
 
@@ -2190,7 +2330,7 @@ def config_page():
                         if path:
                             kobo_image_fields.append({"name": path, "label": label})
     except Exception as e:
-        print("Kobo lookup failed:", e)
+        telemetry.log_failure(log_kobo, "Kobo lookup failed (config page)", e, program_id=program_id)
 
     # ------------------------------------------------------
     # Strict mode – image field per program
@@ -2244,6 +2384,7 @@ def fsp_login():
     config = load_config()
     base_url = config.get("url121")
     if not base_url:
+        _log_rejected(log_auth, "FSP login", "url121_not_configured", level=logging.ERROR, role="fsp")
         return render_template(
             "fsp_login.html", lang=lang, t=t, error="❌ Missing url121"
         )
@@ -2261,15 +2402,31 @@ def fsp_login():
 
             if res.status_code == 201:
                 _store_login_session("fsp", username, res)
+                log_auth.info("FSP login succeeded", extra=telemetry.dims(event="auth.login_succeeded", role="fsp", actor=username))
                 return redirect(url_for("fsp_program_selector"))
 
             elif res.status_code in (400, 401):
+                log_auth.warning(
+                    "FSP login rejected by 121 (HTTP %s)", res.status_code,
+                    extra=telemetry.dims(event="auth.login_rejected", role="fsp", actor=username, status_code=res.status_code),
+                )
                 error = t["login_error"]
 
             else:
                 error = f"Login failed ({res.status_code})."
+                log_auth.error(
+                    "FSP login failed: 121 answered HTTP %s", res.status_code,
+                    extra=telemetry.dims(event="auth.login_failed", role="fsp", actor=username, status_code=res.status_code),
+                )
 
-        except Exception:
+        except Exception as _login_err:
+            # The user is shown the wrong-credentials message here; the log records
+            # what actually happened.
+            telemetry.log_failure(
+                log_auth, "FSP login failed before 121 could answer (user was shown "
+                "the wrong-credentials message)", _login_err, level=logging.ERROR,
+                event="auth.login_unreachable", role="fsp", actor=username,
+            )
             error = t["login_error"]
 
     return render_template("fsp_login.html", lang=lang, t=t, error=error)
@@ -2300,7 +2457,8 @@ def fsp_program_selector():
     # ------------------------------------------------------
     try:
         system_config = load_config()
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "system config")
         system_config = {}
 
     programs_raw = system_config.get("PROGRAMS", [])
@@ -2320,6 +2478,7 @@ def fsp_program_selector():
                 timeout=10,
             )
 
+            _log_service_login(login_resp, "FSP program selector")
             if login_resp.status_code == 201:
                 token = login_resp.json().get("access_token_general")
                 cookies = {"access_token_general": token}
@@ -2337,13 +2496,16 @@ def fsp_program_selector():
                             title = titles.get("en") or next(
                                 iter(titles.values()), title
                             )
-                    except Exception:
-                        pass
+                    except Exception as _title_err:
+                        telemetry.log_failure(
+                            log_121, "Program title lookup failed; showing the program id instead",
+                            _title_err, program_id=pid,
+                        )
 
                     programs.append({"id": str(pid), "title": title})
 
         except Exception as e:
-            print("Program lookup failed:", e)
+            telemetry.log_failure(log_121, "Program lookup failed (FSP program selector)", e)
 
     # ------------------------------------------------------
     # Fallback: titles = program IDs
@@ -2431,6 +2593,7 @@ def fsp_admin():
                 },
                 timeout=8,
             )
+            _log_service_login(login_resp, "FSP admin page")
             if login_resp.status_code == 201:
                 token = login_resp.json().get("access_token_general")
                 r = requests.get(
@@ -2444,7 +2607,7 @@ def fsp_admin():
                         iter(titles.values()), program_title
                     )
         except Exception as e:
-            print(f"[fsp_admin] Failed to fetch 121 program title: {e}")
+            telemetry.log_failure(log_121, "Failed to fetch 121 program title (fsp_admin)", e, program_id=program_id)
 
     username = session.get("fsp_username")
 
@@ -2526,6 +2689,10 @@ SYNC_JOB_FILE = os.path.join(SYNC_JOB_DIR, "sync_job.json")
 # spinner forever.
 SYNC_STALE_SECONDS = 90
 
+# Job ids already reported as interrupted by this worker process, so the
+# 1-second /sync-status poll logs an interruption once, not every second.
+_stale_logged = set()
+
 _sync_job_lock = threading.Lock()
 
 # Progress markers emitted by offline_sync.py. Keep these in step with the
@@ -2562,7 +2729,10 @@ def _sync_job_write(job):
             json.dump(job, f)
         os.replace(tmp, SYNC_JOB_FILE)
     except OSError as e:
-        print(f"[sync] could not write job file: {e}")
+        log_sync.error(
+            "Could not write sync job file: %s", telemetry.describe(e),
+            extra=telemetry.dims(event="sync.job_file_write_failed", job_id=job.get("jobId")),
+        )
 
 
 def _sync_job_is_stale(job):
@@ -2613,6 +2783,9 @@ def _sync_worker(job_id, program_id):
     """Run offline_sync.py, tailing its stdout to keep the job file current."""
     env = os.environ.copy()
     env["PROGRAM_ID"] = str(program_id)
+    # Lets the subprocess stamp its own App Insights records with this job id,
+    # so one sync can be followed across both processes.
+    env["SYNC_JOB_ID"] = str(job_id)
 
     progress = {
         "phase": "starting",
@@ -2668,6 +2841,10 @@ def _sync_worker(job_id, program_id):
     except Exception as e:
         job["status"] = "failed"
         job["error"] = f"Could not start offline_sync.py: {e}"
+        log_sync.error(
+            "Could not start offline_sync.py: %s", telemetry.describe(e),
+            extra=telemetry.dims(event="sync.start_failed", job_id=job_id, program_id=program_id),
+        )
         job["finishedAt"] = time.time()
         job["heartbeat"] = time.time()
         job["percent"] = 100
@@ -2757,7 +2934,10 @@ def _sync_worker(job_id, program_id):
                 progress["phase"] = "payments"
                 _flush()
     except Exception as e:
-        print(f"[sync] stdout reader error: {e}")
+        log_sync.error(
+            "Error while reading sync output", exc_info=True,
+            extra=telemetry.dims(job_id=job_id, program_id=program_id),
+        )
 
     proc.wait()
     err_thread.join(timeout=5)
@@ -2765,8 +2945,12 @@ def _sync_worker(job_id, program_id):
     stdout_text = "\n".join(stdout_tail)
     stderr_text = "".join(stderr_chunks)
 
-    print("\n[DEBUG] SYNC STDOUT (tail):\n", stdout_text)
-    print("\n[DEBUG] SYNC STDERR:\n", stderr_text)
+    # The full subprocess output stays in the container log for deep debugging.
+    # It is not sent to App Insights: offline_sync.py reports there itself.
+    log_sync.info(
+        "Sync output (tail):\n%s\nSync stderr:\n%s", stdout_text, stderr_text,
+        extra=telemetry.dims(job_id=job_id, program_id=program_id, stdout_only=True),
+    )
 
     if proc.returncode != 0:
         progress["phase"] = "failed"
@@ -2795,6 +2979,34 @@ def _sync_worker(job_id, program_id):
     job["percent"] = 100
     _sync_job_write(job)
 
+    # One record per sync with its outcome, duration and counts.
+    try:
+        _duration = round(job["finishedAt"] - job["startedAt"], 1)
+        _dims = telemetry.dims(
+            event="sync.completed" if job["status"] == "done" else "sync.failed",
+            job_id=job_id,
+            program_id=program_id,
+            exit_code=proc.returncode,
+            duration_s=_duration,
+            beneficiaries=job.get("count"),
+            payments=progress.get("paymentsTotal"),
+            transactions=progress.get("transactions"),
+            registrations_fetched=progress.get("registrationsFetched"),
+            registrations_failed=progress.get("registrationsFailed"),
+            photos_done=progress.get("photosDone"),
+            photos_total=progress.get("photosTotal"),
+        )
+        if job["status"] == "done":
+            log_sync.info("Sync finished in %ss: %s", _duration, job["message"], extra=_dims)
+        else:
+            log_sync.error(
+                "Sync failed after %ss (exit code %s): %s",
+                _duration, proc.returncode, telemetry.scrub(job.get("error"), 1000),
+                extra=_dims,
+            )
+    except Exception:
+        pass
+
 
 @app.route("/sync-fsp")
 def sync_fsp():
@@ -2806,11 +3018,17 @@ def sync_fsp():
     """
     program_id = session.get("fsp_program_id")
     if not program_id:
+        _log_rejected(log_sync, "Sync", "no_program_selected")
         return jsonify({"success": False, "message": "❌ No program selected"})
 
     with _sync_job_lock:
         existing = _sync_job_read()
         if existing and existing.get("status") == "running" and not _sync_job_is_stale(existing):
+            log_sync.info(
+                "Sync requested while job %s is still running; returning that job",
+                existing.get("jobId"),
+                extra=telemetry.dims(event="sync.already_running", job_id=existing.get("jobId"), program_id=program_id),
+            )
             return jsonify(
                 {
                     "success": True,
@@ -2841,6 +3059,10 @@ def sync_fsp():
         target=_sync_worker, args=(job_id, program_id), daemon=True
     ).start()
 
+    log_sync.info(
+        "Sync started (job %s)", job_id,
+        extra=telemetry.dims(event="sync.started", job_id=job_id, program_id=program_id),
+    )
     return jsonify(
         {
             "success": True,
@@ -2860,6 +3082,22 @@ def sync_status():
 
     if _sync_job_is_stale(job):
         job = dict(job)
+        try:
+            if job.get("jobId") not in _stale_logged:
+                _stale_logged.add(job.get("jobId"))
+                log_sync.error(
+                    "Sync job %s stopped reporting progress (no heartbeat for over %ss); "
+                    "reported to the user as interrupted",
+                    job.get("jobId"), SYNC_STALE_SECONDS,
+                    extra=telemetry.dims(
+                        event="sync.interrupted",
+                        job_id=job.get("jobId"),
+                        program_id=job.get("programId"),
+                        phase=(job.get("progress") or {}).get("phase"),
+                    ),
+                )
+        except Exception:
+            pass
         job["status"] = "failed"
         job["error"] = (
             "The sync stopped reporting progress (the server process was "
@@ -2874,6 +3112,7 @@ def fsp_logout():
     # On a shared tablet, leaving the token behind would attribute the next
     # person's distribution to the previous user - a confidently wrong audit
     # trail, which is worse than an obviously shared one.
+    log_auth.info("FSP user logged out", extra=telemetry.dims(event="auth.logout", role="fsp"))
     _clear_login_session("fsp")
     return redirect(url_for("fsp_login"))
 
@@ -2899,7 +3138,7 @@ def scan():
         # Default ON: only False when explicitly set to disabled
         qr_enabled = qr_cfg.get("enabled", True) if isinstance(qr_cfg, dict) else True
     except Exception as e:
-        print(f"[scan] Failed to load qr config: {e}")
+        telemetry.log_failure(log_scan, "Failed to load QR config; QR scanning left enabled", e, program_id=program_id)
         qr_enabled = True
 
     # Fetch 121 program title
@@ -2917,6 +3156,7 @@ def scan():
                     },
                     timeout=8,
                 )
+                _log_service_login(login_resp, "scan page")
                 if login_resp.status_code == 201:
                     token = login_resp.json().get("access_token_general")
                     r = requests.get(
@@ -2930,7 +3170,7 @@ def scan():
                             iter(titles.values()), ""
                         )
             except Exception as e:
-                print(f"[scan] Failed to fetch 121 program title: {e}")
+                telemetry.log_failure(log_121, "Failed to fetch 121 program title (scan)", e, program_id=program_id)
 
     # The scan box can now match on a configured registration attribute, whose
     # value is Fernet-encrypted in the offline cache — so this page needs the
@@ -2942,7 +3182,8 @@ def scan():
     # IndexedDB and treats this only as the fallback.
     try:
         fernet_key = load_config().get("ENCRYPTION_KEY", "")
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "system config")
         fernet_key = ""
 
     return render_template(
@@ -2977,6 +3218,7 @@ from io import BytesIO
 def api_offline_latest_zip():
     base_dir = "offline-cache"
     if not os.path.isdir(base_dir):
+        _log_rejected(log_sync, "Offline download", "no_offline_cache")
         return jsonify({"error": "No offline cache found"}), 404
 
     # Filter by programId if provided
@@ -2996,11 +3238,16 @@ def api_offline_latest_zip():
                         batch_info = json.load(f)
                     if str(batch_info.get("programId")) != str(program_id_filter):
                         continue
-                except Exception:
-                    pass
+                except Exception as _info_err:
+                    log_sync.warning(
+                        "batch_info.json in %s is unreadable; batch kept as a candidate: %s",
+                        d, telemetry.describe(_info_err),
+                        extra=telemetry.dims(event="offline_zip.batch_info_unreadable", batch=d),
+                    )
         batch_dirs.append(full_path)
 
     if not batch_dirs:
+        _log_rejected(log_sync, "Offline download", "no_batch_for_program", requested_program_id=program_id_filter)
         return jsonify({"error": "No batches found for this program"}), 404
 
     latest = max(batch_dirs, key=os.path.getmtime)
@@ -3017,6 +3264,18 @@ def api_offline_latest_zip():
                 zf.write(full_path, arcname)
     mem.seek(0)
 
+    try:
+        log_sync.info(
+            "Serving offline batch %s", os.path.basename(latest),
+            extra=telemetry.dims(
+                event="offline_zip.served",
+                batch=os.path.basename(latest),
+                requested_program_id=program_id_filter,
+                batch_age_hours=round((time.time() - os.path.getmtime(latest)) / 3600, 1),
+            ),
+        )
+    except Exception:
+        pass
     return send_file(
         mem,
         mimetype="application/zip",
@@ -3126,8 +3385,90 @@ def api_program_field_uniqueness(program_id):
         })
 
     except Exception as e:
-        print(f"[uniqueness] program {program_id} field '{field}': {e}")
+        telemetry.log_failure(log_121, "Uniqueness check failed", e, level=logging.ERROR, program_id=program_id, field=field)
         return jsonify({"error": str(e)}), 502
+
+
+# ---------------------------------------------------------------------------
+# CLIENT TELEMETRY
+#
+# Scans and verifications happen in the browser, usually offline, so the server
+# never sees them. templates/_client_log.html queues events on the device and
+# posts them here when online; the service worker posts precache failures.
+# Each event becomes one App Insights record (logger "scandroid.client", event
+# "client.<name>") carrying the device id and, from the session, the operator.
+#
+# Login is required, so nobody outside can write to the logs. A device that is
+# not logged in gets 401 and keeps its queue for later. Names, field names and
+# sizes are restricted and every value is scrubbed.
+# ---------------------------------------------------------------------------
+CLIENT_LOG_MAX_EVENTS = 50          # per request; matches MAX_BATCH in the partial
+CLIENT_LOG_MAX_FIELDS = 30          # per event
+CLIENT_LOG_MAX_BYTES = 256 * 1024
+_CLIENT_EVENT_RE = _re.compile(r"^[a-z][a-z0-9_.]{2,63}$")
+_CLIENT_FIELD_RE = _re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+_CLIENT_LEVELS = {"info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
+# Dimensions the server sets itself. A client field with one of these names is
+# renamed client_<name>, so a device can never overwrite who or where a record
+# came from.
+_CLIENT_PROTECTED = {
+    "actor", "role", "route", "method", "component", "event", "log_area",
+    "device_id", "client_time", "client_page", "client_online", "sw_cache",
+}
+log_client = logging.getLogger("scandroid.client")
+
+
+@app.route("/api/client-log", methods=["POST"])
+def api_client_log():
+    if not (session.get("fsp_logged_in") or session.get("admin_logged_in")):
+        return jsonify({"ok": False, "error": "not logged in"}), 401
+    if (request.content_length or 0) > CLIENT_LOG_MAX_BYTES:
+        return jsonify({"ok": False, "error": "too large"}), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+        return jsonify({"ok": False, "error": "bad payload"}), 400
+
+    device = telemetry.scrub(payload.get("device"), 40)
+    sw_cache = telemetry.scrub(payload.get("sw_cache"), 200)
+    accepted = 0
+    for ev in payload["events"][:CLIENT_LOG_MAX_EVENTS]:
+        try:
+            if not isinstance(ev, dict):
+                continue
+            name = str(ev.get("e") or "")
+            if not _CLIENT_EVENT_RE.match(name):
+                continue
+            raw_fields = ev.get("f") if isinstance(ev.get("f"), dict) else {}
+            fields = {}
+            for key, value in list(raw_fields.items())[:CLIENT_LOG_MAX_FIELDS]:
+                if not isinstance(key, str) or not _CLIENT_FIELD_RE.match(key):
+                    continue
+                if isinstance(value, (dict, list)):
+                    continue
+                key = "client_" + key if key in _CLIENT_PROTECTED else key
+                fields[key] = telemetry.scrub(value, 300)
+            page = telemetry.scrub(ev.get("p"), 100)
+            log_client.log(
+                _CLIENT_LEVELS.get(ev.get("l"), logging.INFO),
+                "Device %s: %s on %s",
+                device or "?",
+                name,
+                page,
+                extra=telemetry.dims(
+                    event="client." + name,
+                    device_id=device,
+                    client_time=telemetry.scrub(ev.get("t"), 40),
+                    client_page=page,
+                    client_online=ev.get("o"),
+                    sw_cache=sw_cache,
+                    **fields,
+                ),
+            )
+            accepted += 1
+        except Exception:
+            continue
+    return jsonify({"ok": True, "accepted": accepted})
 
 
 @app.route("/ping")
@@ -3157,7 +3498,8 @@ def beneficiary_offline():
         program_config = programs_map.get(str(program_id), {}) if program_id else {}
         display_fields = program_config.get("fields", [])
         photo_config = program_config.get("photo", {})
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "display config")
         display_fields = []
         photo_config = {}
 
@@ -3244,7 +3586,7 @@ def api_match_columns(program_id):
                     ),
                 })
     except Exception as e:
-        print(f"[api_match_columns] {e}")
+        telemetry.log_failure(log_121, "Could not list payments and match columns", e, program_id=program_id)
 
     return jsonify({
         "programId": str(program_id),
@@ -3276,12 +3618,15 @@ def get_fsp_column_map(program_id, token=None):
             timeout=10,
         )
         if r.status_code != 200:
-            print(f"[get_fsp_column_map] program {program_id}: HTTP {r.status_code}")
+            log_121.warning(
+                "fsp-configurations returned HTTP %s for program %s", r.status_code, program_id,
+                extra=telemetry.dims(event="api121.fsp_config_http_error", program_id=program_id, status_code=r.status_code),
+            )
             return {}
         payload = r.json()
         configs = payload if isinstance(payload, list) else payload.get("data", [])
     except Exception as e:
-        print(f"[get_fsp_column_map] API error: {e}")
+        telemetry.log_failure(log_121, "fsp-configurations request failed", e, program_id=program_id)
         return {}
 
     col_map = {}
@@ -3326,11 +3671,14 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
             timeout=10,
         )
         if r.status_code != 200:
-            print(f"[get_column_for_payment] payment {payment_id}: HTTP {r.status_code}")
+            log_121.warning(
+                "Payment %s returned HTTP %s", payment_id, r.status_code,
+                extra=telemetry.dims(program_id=program_id, payment_id=payment_id, status_code=r.status_code),
+            )
             return None
         fsps = r.json().get("fsps") or []
     except Exception as e:
-        print(f"[get_column_for_payment] API error: {e}")
+        telemetry.log_failure(log_121, "Payment lookup request failed", e, program_id=program_id, payment_id=payment_id)
         return None
 
     names = [
@@ -3343,9 +3691,10 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
     if len(columns) == 1:
         return columns.pop()
     if len(columns) > 1:
-        print(
-            f"[get_column_for_payment] payment {payment_id} spans FSP configs "
-            f"{names} with conflicting columns {sorted(columns)} — cannot reconcile."
+        log_payments.error(
+            "Payment %s spans FSP configs %s with conflicting match columns %s - cannot reconcile.",
+            payment_id, names, sorted(columns),
+            extra=telemetry.dims(event="payments.column_conflict", program_id=program_id, payment_id=payment_id),
         )
     return None
 
@@ -3359,7 +3708,10 @@ def get_121_token():
     base_url = config.get("url121")
 
     if not username or not password or not base_url:
-        print("❌ Missing 121 credentials")
+        log_121.error(
+            "Missing 121 service-account settings (url121, username121 or password121)",
+            extra=telemetry.dims(event="api121.service_login_not_configured"),
+        )
         return None
 
     login_url = f"{base_url}/api/users/login"
@@ -3370,19 +3722,26 @@ def get_121_token():
         )
 
         if resp.status_code != 201:
-            print(f"❌ Login failed ({resp.status_code}): {resp.text}")
+            log_121.error(
+                "Service-account login to 121 failed: HTTP %s %s",
+                resp.status_code, telemetry.scrub(resp.text, 200),
+                extra=telemetry.dims(event="api121.service_login_failed", status_code=resp.status_code),
+            )
             return None
 
         # 121 API returns token in JSON (correct behaviour)
         token = resp.json().get("access_token_general")
         if not token:
-            print("❌ Login succeeded but no token returned")
+            log_121.error(
+                "Service-account login to 121 succeeded but returned no token",
+                extra=telemetry.dims(event="api121.service_login_no_token"),
+            )
             return None
 
         return token
 
     except Exception as e:
-        print(f"❌ 121 API error: {e}")
+        telemetry.log_failure(log_121, "Service-account login request failed", e, level=logging.ERROR)
         return None
 
 
@@ -3431,10 +3790,11 @@ def _store_login_session(role, username, response):
     session[role + "_login_at"] = time.time()
 
     if not token:
-        print(
-            "[auth] WARNING: 121 login for %s returned no access_token_general; "
-            "this session's submissions will fall back to the service account."
-            % username
+        log_auth.warning(
+            "121 login for %s returned no access_token_general; this session's "
+            "submissions will fall back to the service account.",
+            username,
+            extra=telemetry.dims(event="auth.no_operator_token", role=role, actor=username),
         )
 
 
@@ -3491,9 +3851,10 @@ def get_121_token_for_request(role="fsp"):
     if token:
         return token, (username or role), True
 
-    print(
-        "[auth] NOTE: no operator token in session, so this submission is "
-        "attributed to the service account."
+    log_auth.warning(
+        "No operator token in session, so this submission is attributed to the "
+        "service account.",
+        extra=telemetry.dims(event="auth.service_account_fallback", role=role),
     )
     return get_121_token(), "the shared 121 service account", False
 
@@ -3516,6 +3877,7 @@ def submit_payments():
         fernet_key = config.get("ENCRYPTION_KEY")
 
         if not program_id:
+            _log_rejected(log_payments, "Payment submission", "no_program_selected", level=logging.WARNING)
             return (
                 "❌ No active program selected. Please go back and select a program.",
                 400,
@@ -3528,6 +3890,7 @@ def submit_payments():
         # access even when the submitting user's role does not.
         fsp_col_map = get_fsp_column_map(program_id)
         if not fsp_col_map:
+            _log_rejected(log_payments, "Payment submission", "fsp_config_unreadable", level=logging.ERROR)
             return (
                 f"❌ Could not read the FSP configurations for program {program_id}. "
                 "Check 121 connectivity and that this account has access.",
@@ -3536,31 +3899,37 @@ def submit_payments():
         payment_columns = {}  # paymentId -> column, resolved lazily below
 
         if not fernet_key:
+            _log_rejected(log_payments, "Payment submission", "encryption_key_missing", level=logging.ERROR)
             return "❌ Missing ENCRYPTION_KEY in system_config.json", 400
 
         # Fernet decryptor
         try:
             fernet = Fernet(fernet_key.encode())
         except ValueError as e:
+            _log_rejected(log_payments, "Payment submission", "encryption_key_invalid", level=logging.ERROR)
             return f"❌ Invalid Fernet key: {e}", 400
 
         # Get uploaded CSV file
         if "csv" not in request.files:
+            _log_rejected(log_payments, "Payment submission", "no_csv_file", level=logging.WARNING)
             return "❌ No CSV file provided", 400
 
         file = request.files["csv"]
         if file.filename == "":
+            _log_rejected(log_payments, "Payment submission", "empty_filename", level=logging.WARNING)
             return "❌ Empty filename", 400
 
         try:
             csv_content = file.stream.read().decode("utf-8")
         except Exception as e:
+            _log_rejected(log_payments, "Payment submission", "csv_unreadable", level=logging.WARNING, error=telemetry.describe(e))
             return f"❌ Failed to read CSV: {e}", 400
 
         reader = csv.DictReader(io.StringIO(csv_content))
         rows = list(reader)
 
         if not rows:
+            _log_rejected(log_payments, "Payment submission", "csv_empty", level=logging.WARNING)
             return "❌ CSV is empty", 400
 
         # -------------------------------
@@ -3576,6 +3945,7 @@ def submit_payments():
 
         # Defensive: cache_base may not exist on a fresh deployment
         if not os.path.isdir(cache_base):
+            _log_rejected(log_payments, "Payment submission", "offline_cache_missing", level=logging.ERROR)
             return (
                 f"❌ Offline cache directory '{cache_base}' not found on the server. "
                 "Run sync first to create it.",
@@ -3595,21 +3965,29 @@ def submit_payments():
                         bi = json.load(f)
                     if str(bi.get("programId")) == str(program_id):
                         program_dirs.append(d)
-                except Exception:
-                    pass
+                except Exception as _info_err:
+                    log_payments.warning(
+                        "batch_info.json in %s is unreadable; batch skipped: %s",
+                        d, telemetry.describe(_info_err),
+                        extra=telemetry.dims(event="payments.batch_info_unreadable", batch=d),
+                    )
             else:
                 program_dirs.append(d)  # include legacy batches without batch_info
 
         batch_dirs = sorted(program_dirs, key=extract_batch_number)
 
         if not batch_dirs:
+            _log_rejected(log_payments, "Payment submission", "no_batch_for_program", level=logging.WARNING)
             return (
                 "❌ No recent payment batches found for this program — run sync first.",
                 400,
             )
 
         latest_batch = batch_dirs[-1]
-        print(f"[DEBUG] Using batch folder: {latest_batch}")
+        log_payments.info(
+            "Using batch folder %s", latest_batch,
+            extra=telemetry.dims(program_id=program_id, batch=latest_batch),
+        )
 
         latest_batch_info = {}
         latest_batch_info_path = os.path.join(
@@ -3619,7 +3997,12 @@ def submit_payments():
             try:
                 with open(latest_batch_info_path, "r", encoding="utf-8") as f:
                     latest_batch_info = json.load(f)
-            except Exception:
+            except Exception as _info_err:
+                log_payments.warning(
+                    "batch_info.json in %s is unreadable; treating the batch as legacy: %s",
+                    latest_batch, telemetry.describe(_info_err),
+                    extra=telemetry.dims(event="payments.batch_info_unreadable", batch=latest_batch),
+                )
                 latest_batch_info = {}
 
         # Legacy batches (without metadata) are assumed encrypted.
@@ -3629,12 +4012,14 @@ def submit_payments():
             cache_base, latest_batch, "registrations_cache.json"
         )
         if not os.path.exists(reg_cache_path):
+            _log_rejected(log_payments, "Payment submission", "registrations_cache_missing", level=logging.ERROR)
             return "❌ registrations_cache.json missing — run sync again.", 400
 
         try:
             with open(reg_cache_path, "r", encoding="utf-8") as f:
                 reg_data = json.load(f)
         except Exception as e:
+            _log_rejected(log_payments, "Payment submission", "registrations_cache_unreadable", level=logging.ERROR, error=telemetry.describe(e))
             return f"❌ Failed to load registrations_cache.json — {e}", 500
 
         # The old "match value -> paymentId" cache map lived here. It keyed rows
@@ -3646,6 +4031,7 @@ def submit_payments():
         # -------------------------------
         grouped = {}
         skipped_no_payment_id = 0
+        decrypt_failed = 0  # counted for the summary log only
 
         # Current devices emit a column-neutral "matchValue". Older ones emit a
         # column named after whatever they thought the match column was, so
@@ -3673,7 +4059,11 @@ def submit_payments():
                 try:
                     raw_value = fernet.decrypt(raw_value.encode()).decode().strip()
                 except InvalidToken as e:
-                    print(f"[!] Failed to decrypt incoming match value — invalid token: {e}")
+                    log_payments.warning(
+                        "Could not decrypt an incoming match value (invalid token); row skipped",
+                        extra=telemetry.dims(event="payments.row_decrypt_failed", program_id=program_id),
+                    )
+                    decrypt_failed += 1
                     continue
             # Prefer the paymentId the FSP actually selected on the device.
             #
@@ -3700,12 +4090,14 @@ def submit_payments():
 
         if not grouped:
             if skipped_no_payment_id:
+                _log_rejected(log_payments, "Payment submission", "all_rows_without_payment_id", level=logging.WARNING, row_count=skipped_no_payment_id)
                 return (
                     f"❌ No valid rows to submit — {skipped_no_payment_id} row(s) "
                     "carried no paymentId. This export came from an older app "
                     "version. Sync the device while online and send again.",
                     400,
                 )
+            _log_rejected(log_payments, "Payment submission", "no_usable_rows", level=logging.WARNING)
             return (
                 "❌ No valid rows to submit — the CSV contained no usable match "
                 "values. Re-sync and try again.",
@@ -3713,12 +4105,20 @@ def submit_payments():
             )
 
         if skipped_no_payment_id:
-            print(f"[warn] {skipped_no_payment_id} row(s) skipped: no paymentId")
+            log_payments.warning(
+                "%s row(s) skipped: no paymentId", skipped_no_payment_id,
+                extra=telemetry.dims(
+                    event="payments.rows_without_payment_id",
+                    program_id=program_id,
+                    row_count=skipped_no_payment_id,
+                ),
+            )
         # -------------------------------
         # SUBMIT TO 121 /paymentId/excel-reconciliation
         # -------------------------------
         token, actor_label, user_attributed = get_121_token_for_request("fsp")
         if not token:
+            _log_rejected(log_payments, "Payment submission", "login_failed", level=logging.ERROR)
             return "❌ Login to 121 failed", 401
 
         # Early warning only - see _has_program_permission. A definite "no" is
@@ -3727,6 +4127,7 @@ def submit_payments():
         if user_attributed and _has_program_permission(
             "fsp", program_id, "payment.update"
         ) is False:
+            _log_rejected(log_payments, "Payment submission", "permission_denied", level=logging.WARNING, missing_permission="payment.update")
             return (
                 f"❌ Your 121 account ({actor_label}) is not allowed to reconcile "
                 f"payments for program {program_id}. Ask your 121 administrator to "
@@ -3734,16 +4135,19 @@ def submit_payments():
                 403,
             )
 
-        print(f"[auth] submitting payment reconciliation as {actor_label}")
+        log_payments.info(
+            "Submitting payment reconciliation as %s", actor_label,
+            extra=telemetry.dims(
+                program_id=program_id,
+                actor=actor_label,
+                user_attributed=user_attributed,
+                payment_count=len(grouped),
+            ),
+        )
 
         success_count = 0
         fail_count = 0
         failure_details = []
-        # paymentIds 121 did NOT accept. Returned to the device in the
-        # X-Failed-Payment-Ids header so it can (a) keep those rows pending
-        # instead of marking them submitted and (b) offer them as a CSV for
-        # manual reconciliation by the finance manager.
-        failed_pids = []
 
         for pid, items in grouped.items():
             # The header 121 expects is a property of THIS payment's FSP
@@ -3757,14 +4161,16 @@ def submit_payments():
 
             if not pay_column:
                 fail_count += 1
-                failed_pids.append(str(pid))
                 failure_details.append(
                     f"paymentId {pid}: could not determine its match column from "
                     "the 121 FSP configuration — not submitted"
                 )
                 continue
 
-            print(f"[OK] paymentId {pid}: reconciling on column '{pay_column}'")
+            log_payments.info(
+                "paymentId %s: reconciling on column '%s'", pid, pay_column,
+                extra=telemetry.dims(program_id=program_id, payment_id=pid, match_column=pay_column),
+            )
 
             output_buffer = io.StringIO()
             writer = csv.DictWriter(
@@ -3792,55 +4198,93 @@ def submit_payments():
                 )
             except requests.RequestException as e:
                 fail_count += 1
-                failed_pids.append(str(pid))
                 failure_details.append(f"paymentId {pid}: network error — {e}")
-                print(f"[ERROR] Network error submitting paymentId {pid}: {e}")
+                log_payments.error(
+                    "Network error submitting paymentId %s: %s", pid, telemetry.describe(e),
+                    extra=telemetry.dims(event="payments.reconciliation_network_error", program_id=program_id, payment_id=pid),
+                )
                 continue
 
             if upload_resp.status_code == 201:
                 success_count += 1
-                print(f"[OK] Submitted to paymentId {pid}")
+                log_payments.info(
+                    "Submitted reconciliation to paymentId %s (%s rows)", pid, len(items),
+                    extra=telemetry.dims(program_id=program_id, payment_id=pid, row_count=len(items)),
+                )
             elif upload_resp.status_code == 401 and user_attributed:
                 fail_count += 1
-                failed_pids.append(str(pid))
                 failure_details.append(
                     f"paymentId {pid}: your 121 login has expired — log out, log "
                     "back in and send again. Nothing was lost."
                 )
-                print(f"[ERROR] Operator token rejected (401) for paymentId {pid}")
+                log_payments.warning(
+                    "Operator token rejected (401) for paymentId %s", pid,
+                    extra=telemetry.dims(event="payments.operator_token_expired", program_id=program_id, payment_id=pid),
+                )
             else:
                 fail_count += 1
-                failed_pids.append(str(pid))
                 snippet = (upload_resp.text or "")[:300]
                 failure_details.append(
                     f"paymentId {pid}: HTTP {upload_resp.status_code} — {snippet}"
                 )
-                print(
-                    f"[ERROR] Failed to submit to paymentId {pid}: {upload_resp.status_code} — {upload_resp.text}"
+                log_payments.error(
+                    "Failed to submit to paymentId %s: HTTP %s %s",
+                    pid, upload_resp.status_code, telemetry.scrub(upload_resp.text),
+                    extra=telemetry.dims(
+                        event="payments.reconciliation_http_error",
+                        program_id=program_id,
+                        payment_id=pid,
+                        status_code=upload_resp.status_code,
+                    ),
                 )
 
         # -------------------------------
         # FINAL RESPONSE
         # -------------------------------
-        failed_header = {"X-Failed-Payment-Ids": ",".join(failed_pids)}
+        # One record per submission: what came in, what 121 accepted.
+        try:
+            log_payments.log(
+                logging.INFO if not fail_count else (logging.WARNING if success_count else logging.ERROR),
+                "Payment submission finished: %s of %s payment(s) accepted by 121",
+                success_count, len(grouped),
+                extra=telemetry.dims(
+                    event="payments.submit_completed",
+                    program_id=program_id,
+                    actor=actor_label,
+                    user_attributed=user_attributed,
+                    batch=latest_batch,
+                    rows=len(rows),
+                    payments=len(grouped),
+                    succeeded=success_count,
+                    failed=fail_count,
+                    rows_without_payment_id=skipped_no_payment_id,
+                    rows_decrypt_failed=decrypt_failed,
+                    failures=telemetry.scrub(" | ".join(failure_details), 1000) if failure_details else None,
+                ),
+            )
+        except Exception:
+            pass
+
         if success_count > 0:
             msg = f"✅ Submitted to {success_count} paymentId(s)."
             if fail_count:
                 msg += f" ❌ {fail_count} failed: " + " | ".join(failure_details)
-            return msg, 200, failed_header
+            return msg, 200
         else:
             detail = (
                 " | ".join(failure_details)
                 if failure_details
                 else "no details available"
             )
-            return f"❌ All submissions failed. {detail}", 502, failed_header
+            return f"❌ All submissions failed. {detail}", 502
 
     except Exception as e:
         # Last-resort handler: surface a readable message to the frontend
         # AND log the full traceback for server-side debugging.
-        tb = traceback.format_exc()
-        print(f"[FATAL] /submit-payments crashed: {e}\n{tb}")
+        log_payments.exception(
+            "/submit-payments crashed",
+            extra=telemetry.dims(event="payments.submit_crashed"),
+        )
         return (
             f"❌ Server error in /submit-payments: {type(e).__name__}: {e}",
             500,
@@ -3867,23 +4311,28 @@ def submit_registration_updates():
         config = load_config()
         program_id = session.get("fsp_program_id") or config.get("programId")
         if not program_id:
+            _log_rejected(log_payments, "Registration update", "no_program_selected", level=logging.WARNING)
             return "❌ No active program selected. Please go back and select a program.", 400
 
         url121 = config.get("url121")
         if not url121:
+            _log_rejected(log_payments, "Registration update", "url121_not_configured", level=logging.ERROR)
             return "❌ Missing url121 in system_config.json", 400
 
         if 'csv' not in request.files:
+            _log_rejected(log_payments, "Registration update", "no_csv_file", level=logging.WARNING)
             return "❌ No CSV file provided", 400
 
         file = request.files['csv']
         if file.filename == '':
+            _log_rejected(log_payments, "Registration update", "empty_filename", level=logging.WARNING)
             return "❌ Empty filename", 400
 
         try:
             csv_bytes = file.stream.read()
             csv_text = csv_bytes.decode("utf-8")
         except Exception as e:
+            _log_rejected(log_payments, "Registration update", "csv_unreadable", level=logging.WARNING, error=telemetry.describe(e))
             return f"❌ Failed to read CSV: {e}", 400
 
         # Light validation: must be non-empty and contain a referenceId column.
@@ -3891,14 +4340,18 @@ def submit_registration_updates():
         headers = reader.fieldnames or []
         rows = list(reader)
         if not rows:
+            _log_rejected(log_payments, "Registration update", "csv_empty", level=logging.WARNING)
             return "❌ CSV is empty — nothing to update.", 400
         if "referenceId" not in headers:
+            _log_rejected(log_payments, "Registration update", "no_reference_id_column", level=logging.WARNING)
             return "❌ CSV is missing the required 'referenceId' column.", 400
         if len(rows) > 100000:
+            _log_rejected(log_payments, "Registration update", "too_many_rows", level=logging.WARNING, row_count=len(rows))
             return "❌ Too many rows — 121 supports at most 100k rows per update.", 400
 
         token, actor_label, user_attributed = get_121_token_for_request("fsp")
         if not token:
+            _log_rejected(log_payments, "Registration update", "login_failed", level=logging.ERROR)
             return "❌ Login to 121 failed", 401
 
         # Hiding the inputs in the UI is not enforcement: without this, an
@@ -3915,6 +4368,7 @@ def submit_registration_updates():
                 if _has_program_permission("fsp", program_id, perm) is False
             ]
             if missing:
+                _log_rejected(log_payments, "Registration update", "permission_denied", level=logging.WARNING, missing_permission=",".join(missing))
                 return (
                     f"❌ Your 121 account ({actor_label}) is not allowed to "
                     f"update registrations for program {program_id}. Ask your "
@@ -3924,7 +4378,15 @@ def submit_registration_updates():
                     403,
                 )
 
-        print(f"[auth] submitting registration updates as {actor_label}")
+        log_payments.info(
+            "Submitting %s registration update(s) as %s", len(rows), actor_label,
+            extra=telemetry.dims(
+                program_id=program_id,
+                actor=actor_label,
+                user_attributed=user_attributed,
+                row_count=len(rows),
+            ),
+        )
 
         update_url = f"{url121}/api/programs/{program_id}/registrations"
         files = {"file": ("registration_updates.csv", csv_bytes, "text/csv")}
@@ -3944,12 +4406,24 @@ def submit_registration_updates():
                 timeout=60,
             )
         except requests.RequestException as e:
+            log_payments.error(
+                "Registration update: network error reaching 121: %s", telemetry.describe(e),
+                extra=telemetry.dims(event="registrations.update_network_error", program_id=program_id, row_count=len(rows)),
+            )
             return f"❌ Network error updating registrations: {e}", 502
 
         if resp.status_code in (200, 201, 202, 204):
+            log_payments.info(
+                "Registration update accepted by 121 (HTTP %s, %s rows)", resp.status_code, len(rows),
+                extra=telemetry.dims(event="registrations.update_completed", program_id=program_id, row_count=len(rows), status_code=resp.status_code),
+            )
             return f"✅ Updated {len(rows)} registration(s) in 121.", 200
 
         if resp.status_code == 401 and user_attributed:
+            log_payments.warning(
+                "Registration update: operator token rejected (401)",
+                extra=telemetry.dims(event="registrations.operator_token_expired", program_id=program_id),
+            )
             return (
                 "❌ Your 121 login has expired. Please log out, log back in and "
                 "try again.",
@@ -3957,14 +4431,20 @@ def submit_registration_updates():
             )
 
         snippet = (resp.text or "")[:400]
+        log_payments.error(
+            "Registration update rejected by 121: HTTP %s %s", resp.status_code, telemetry.scrub(resp.text),
+            extra=telemetry.dims(event="registrations.update_http_error", program_id=program_id, row_count=len(rows), status_code=resp.status_code),
+        )
         return (
             f"❌ 121 rejected the registration update (HTTP {resp.status_code}): {snippet}",
             502,
         )
 
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[FATAL] /submit-registration-updates crashed: {e}\n{tb}")
+        log_payments.exception(
+            "/submit-registration-updates crashed",
+            extra=telemetry.dims(event="registrations.submit_crashed"),
+        )
         return f"❌ Server error in /submit-registration-updates: {type(e).__name__}: {e}", 500
 
 
@@ -4045,7 +4525,8 @@ def voucher_design():
     # ------------------------------------------------------
     try:
         system_config = load_config()
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "system config")
         system_config = {}
 
     programs, _ = resolve_programs(system_config)
@@ -4086,7 +4567,8 @@ def vouchers_page():
     # Load system config (for program title, currency, etc.)
     try:
         system_config = load_config()
-    except Exception:
+    except Exception as _cfg_err:
+        _log_config_load_failure(_cfg_err, "system config")
         system_config = {}
 
     # Username from session
@@ -4315,6 +4797,7 @@ def vouchers_upload():
         try:
             rows, columns = _parse_voucher_file(upload_path)
         except ValueError:
+            _log_rejected(log_vouchers, "Voucher upload", "unsupported_file_type", file_extension=os.path.splitext(filename)[1])
             return jsonify({"success": False, "message": "Unsupported file type"}), 400
 
         program_id = request.form.get("program_id") or None
@@ -4346,6 +4829,7 @@ def vouchers_upload():
         )
 
     except Exception as e:
+        telemetry.log_failure(log_vouchers, "Voucher upload: could not read the file", e, file_extension=os.path.splitext(filename)[1])
         return jsonify({"success": False, "message": f"Failed to parse file: {e}"}), 400
 
 
@@ -4414,6 +4898,7 @@ def vouchers_download():
     try:
         rows, _columns = _parse_voucher_file(file_path)
     except ValueError:
+        _log_rejected(log_vouchers, "Voucher download", "unsupported_file_type")
         flash("Unsupported voucher file type.", "error")
         return redirect(url_for("vouchers_page"))
 

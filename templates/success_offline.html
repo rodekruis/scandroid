@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <title>{{ t["success_title"] }}</title>
+  <title>{{ t["invalid_qr_title"] }}</title>
   <meta name="theme-color" content="#002855">
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -23,15 +23,13 @@
     main { flex:1; display:flex; justify-content:center; align-items:center; padding:24px var(--pad); }
     .card { background:var(--card); border-radius:18px; box-shadow:0 10px 30px rgba(0,0,0,.06); border:1px solid var(--line); width:100%; max-width:420px; overflow:hidden; }
     .card-body { padding:36px 28px 28px; text-align:center; }
-    /* Check badge: a soft ring around a drawn tick, replacing the raw emoji. */
-    .check-badge { width:72px; height:72px; margin:0 auto 18px; border-radius:50%; background:#e8f9ef; display:flex; align-items:center; justify-content:center; }
-    .check-badge svg { width:36px; height:36px; stroke:#059669; stroke-width:3; fill:none; stroke-linecap:round; stroke-linejoin:round; }
-    h2 { margin:0 0 6px; font-size:1.5rem; font-weight:800; letter-spacing:-0.01em; color:#065f46; }
-    .success-msg { color:var(--muted); margin:0 0 22px; font-size:15px; line-height:1.45; }
-    /* Counter: a quiet status line, NOT a boxed pseudo-button — it sits above the
-       two real actions and must not read as a third tappable control. */
-    .counter { display:flex; align-items:center; justify-content:center; gap:8px; margin:0 0 22px; padding:12px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); color:var(--muted); font-size:14px; }
-    .counter .count-num { font-weight:800; font-size:1.15rem; color:#002855; }
+    /* Error badge: a soft ring around a drawn cross, mirroring the success page's check. */
+    .error-badge { width:72px; height:72px; margin:0 auto 18px; border-radius:50%; background:#fee2e2; display:flex; align-items:center; justify-content:center; }
+    .error-badge svg { width:34px; height:34px; stroke:#dc2626; stroke-width:3; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+    h2 { margin:0 0 6px; font-size:1.5rem; font-weight:800; letter-spacing:-0.01em; color:#b91c1c; }
+    .error-msg { color:var(--muted); margin:0 0 20px; font-size:15px; line-height:1.45; }
+    /* Reason: a distinct alert — it carries the *why*, which the worker needs to act. */
+    .reason-box { margin:0 0 22px; padding:12px 14px; background:#fef2f2; border:1px solid #fecaca; border-radius:12px; font-weight:600; color:#991b1b; font-size:14px; line-height:1.4; }
     .actions { display:grid; gap:10px; }
     .btn { padding:14px 16px; font-weight:700; border:none; border-radius:12px; font-size:1rem; cursor:pointer; transition:transform 0.1s ease, filter 0.15s ease; }
     .btn:hover { filter:brightness(0.97); }
@@ -48,6 +46,7 @@
       footer { flex-direction:column; text-align:center; gap:4px; font-size:0.8rem; padding:10px; }
     }
   </style>
+{% include "_client_log.html" %}
 </head>
 <body>
 
@@ -60,8 +59,9 @@
   </div>
   <div class="header-controls">
     <div class="lang-select">
-      <form method="get" action="/success-offline">
-        <input type="hidden" name="program_id" id="langProgramId" value="{{ program_id }}">
+      <form method="get" action="/invalid-qr">
+        <input type="hidden" name="reason" value="{{ reason }}">
+        <input type="hidden" name="program_id" value="{{ program_id }}">
         <select name="lang" onchange="this.form.submit()">
           <option value="en" {% if lang == 'en' %}selected{% endif %}>English</option>
           <option value="fr" {% if lang == 'fr' %}selected{% endif %}>Français</option>
@@ -75,22 +75,15 @@
 <main>
   <div class="card">
     <div class="card-body">
-      <div class="check-badge">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 12 10 18 20 6"></polyline></svg>
+      <div class="error-badge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
       </div>
-      <h2>{{ t["success_title"] }}</h2>
-      <p class="success-msg">{{ t["success_message"] }}</p>
-      <div class="counter">
-        <span class="count-label">{{ t["payments_ready"]|trim|replace('：','')|replace(':','')|trim }}</span>
-        <span id="counter" class="count-num">…</span>
-      </div>
+      <h2>{{ t["invalid_qr_title"] }}</h2>
+      <p class="error-msg">{{ t["invalid_qr_message"] }}</p>
+      <div class="reason-box" id="reasonBox">{{ t["checking_reason"] }}</div>
       <div class="actions">
-        <button id="scanNextBtn" class="btn btn-scan">
-          {{ t["scan_next"] }}
-        </button>
-        <button id="goHomeBtn" class="btn btn-home">
-          {{ t["go_home"] }}
-        </button>
+        <button class="btn btn-scan" id="btnScan">{{ t["scan_next"] }}</button>
+        <button class="btn btn-home" id="btnHome">{{ t["go_home"] }}</button>
       </div>
     </div>
   </div>
@@ -102,49 +95,26 @@
 </footer>
 
 <script>
-  // This page is served cacheFirst with ignoreSearch, so the server-baked
-  // "{{ program_id }}" is usually empty (it comes from the precached shell).
-  // Read the live URL first — exactly like beneficiary_offline.html — so the
-  // count filter and the navigation buttons always know which program this
-  // session belongs to.
-  const _params = new URLSearchParams(location.search);
-  const ACTIVE_PROGRAM_ID = _params.get('program_id') || "{{ program_id or '' }}";
-  const LANG = _params.get('lang') || "{{ lang or 'en' }}";
+  const params = new URLSearchParams(window.location.search);
+  const reason = params.get("reason") || "Invalid or unrecognized QR code.";
+  const lang   = params.get("lang") || "en";
+  const programId = params.get("program_id") || "{{ program_id or '' }}";
 
-  window.addEventListener("DOMContentLoaded", async () => {
-    // Wire navigation from the resolved values, never the baked-empty ones.
-    const homeBtn = document.getElementById("goHomeBtn");
-    if (homeBtn) homeBtn.onclick = () =>
-      window.location.href = `/fsp-admin?program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}&lang=${encodeURIComponent(LANG)}`;
-    const scanBtn = document.getElementById("scanNextBtn");
-    if (scanBtn) scanBtn.onclick = () =>
-      window.location.href = `/scan?lang=${encodeURIComponent(LANG)}&program_id=${encodeURIComponent(ACTIVE_PROGRAM_ID)}`;
-    const langPid = document.getElementById("langProgramId");
-    if (langPid) langPid.value = ACTIVE_PROGRAM_ID;
+  const reasonMap = {
+    "status=success":        "{{ t['reason_used'] }}",
+    "Already scanned":       "{{ t['reason_used'] }}",
+    "Invalid QR":            "{{ t['reason_invalid'] }}",
+    "No offline record found": "{{ t['reason_no_record'] }}",
+    "Database error":        "{{ t['reason_database'] }}"
+  };
+  document.getElementById("reasonBox").textContent = reasonMap[reason] || reason;
 
-    const setCount = (n) => { document.getElementById("counter").textContent = n; };
-    try {
-      const dbReq = indexedDB.open("scandroid");
-      dbReq.onsuccess = function () {
-        const db = dbReq.result;
-        if (!db.objectStoreNames.contains("payments")) {
-          setCount(0);
-          return;
-        }
-        const store = db.transaction("payments","readonly").objectStore("payments");
-        const req = store.getAll();
-        req.onsuccess = () => {
-          const count = req.result.filter(p =>
-            p.status === "success" &&
-            (!ACTIVE_PROGRAM_ID || (p.uuid && p.uuid.startsWith(ACTIVE_PROGRAM_ID + ':')))
-          ).length;
-          setCount(count);
-        };
-        req.onerror = () => setCount(0);
-      };
-      dbReq.onerror = () => setCount(0);
-    } catch(e) { setCount(0); }
-  });
+  document.getElementById("btnScan").onclick = () => {
+    window.location.href = `/scan?lang=${encodeURIComponent(lang)}`;
+  };
+  document.getElementById("btnHome").onclick = () => {
+    window.location.href = `/fsp-admin?program_id=${encodeURIComponent(programId)}&lang=${encodeURIComponent(lang)}`;
+  };
 </script>
 </body>
 </html>
