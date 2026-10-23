@@ -981,6 +981,9 @@ translations = {
     "payment_submit_success": "✅ Payments submitted successfully!",
     "payment_submit_failed": "❌ Failed to submit",
     "no_payments": "No payments ready to send.",
+    "payment_send_error_reconcile": "Error sending payments, please forward this file to the finance manager.",
+    "download_reconciliation_csv": "Download CSV for manual reconciliation",
+    "payment_send_partial_count": "{failed} of {total} payments could not be sent to 121.",
 
     # ---- beneficiary_offline.html ----
     "title": "Beneficiary Information",
@@ -1210,6 +1213,9 @@ translations = {
     "payment_submit_success": "✅ Paiements envoyés avec succès !",
     "payment_submit_failed": "❌ Échec de l'envoi",
     "no_payments": "Aucun paiement prêt à envoyer.",
+    "payment_send_error_reconcile": "Erreur lors de l'envoi des paiements, veuillez transmettre ce fichier au responsable financier.",
+    "download_reconciliation_csv": "Télécharger le CSV pour le rapprochement manuel",
+    "payment_send_partial_count": "{failed} paiement(s) sur {total} n'ont pas pu être envoyés à 121.",
 
     # ---- beneficiary_offline.html ----
     "title": "Informations sur le bénéficiaire",
@@ -1424,6 +1430,9 @@ translations = {
     "payment_submit_success": "✅ تم إرسال المدفوعات بنجاح!",
     "payment_submit_failed": "❌ فشل الإرسال",
     "no_payments": "لا توجد مدفوعات جاهزة للإرسال.",
+    "payment_send_error_reconcile": "حدث خطأ أثناء إرسال المدفوعات، يرجى إرسال هذا الملف إلى المدير المالي.",
+    "download_reconciliation_csv": "تنزيل ملف CSV للتسوية اليدوية",
+    "payment_send_partial_count": "تعذّر إرسال {failed} من أصل {total} من المدفوعات إلى 121.",
 
     # ---- beneficiary_offline.html ----
     "title": "معلومات المستفيد",
@@ -2451,16 +2460,8 @@ def fsp_admin():
     # worse than a late 403 from 121 itself.
 
     # 1. Can this operator reconcile payments? Gates the Send block.
-    can_update_payments = all(
-        _has_program_permission("fsp", program_id, perm) is not False
-        for perm in (
-            "payment.update",
-            "payment.retry",
-            "payment.start",
-            "program.read",
-            "payment.read",
-            "payment:transaction.read",
-        )
+    can_update_payments = (
+        _has_program_permission("fsp", program_id, "payment.update") is not False
     )
 
     # 2. Can this operator update registrations? Gates the editable fields,
@@ -3304,63 +3305,30 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
     fallback and no global: a program can run several FSP configurations at
     once with different columns, and picking one arbitrarily silently
     reconciles against the wrong field.
-
-    Source order mirrors offline_sync.payment_fsp_names: the payments LIST
-    carries `fsps`; the single-payment endpoint is only a fallback.
-    Every path that returns None prints why.
     """
     config = load_config()
     url121 = config.get("url121")
     if not (url121 and program_id and payment_id):
-        print(
-            f"[get_column_for_payment] missing input: url121={bool(url121)} "
-            f"program_id={program_id!r} payment_id={payment_id!r}"
-        )
         return None
 
     token = token or get_121_token()
     if not token:
-        print("[get_column_for_payment] no 121 token")
         return None
     if col_map is None:
         col_map = get_fsp_column_map(program_id, token=token)
     if not col_map:
-        print(f"[get_column_for_payment] program {program_id}: empty column map")
         return None
 
-    fsps = []
     try:
         r = requests.get(
-            f"{url121}/api/programs/{program_id}/payments",
+            f"{url121}/api/programs/{program_id}/payments/{payment_id}",
             cookies={"access_token_general": token},
-            timeout=15,
+            timeout=10,
         )
-        if r.status_code == 200:
-            payload = r.json()
-            items = payload if isinstance(payload, list) else payload.get("data", [])
-            for p in items:
-                if str(p.get("paymentId", p.get("id"))) == str(payment_id):
-                    fsps = p.get("fsps") or []
-                    break
-        else:
-            print(
-                f"[get_column_for_payment] program {program_id} payments list: "
-                f"HTTP {r.status_code}"
-            )
-
-        if not fsps:
-            r = requests.get(
-                f"{url121}/api/programs/{program_id}/payments/{payment_id}",
-                cookies={"access_token_general": token},
-                timeout=10,
-            )
-            if r.status_code != 200:
-                print(
-                    f"[get_column_for_payment] program {program_id} payment "
-                    f"{payment_id}: HTTP {r.status_code}"
-                )
-                return None
-            fsps = r.json().get("fsps") or []
+        if r.status_code != 200:
+            print(f"[get_column_for_payment] payment {payment_id}: HTTP {r.status_code}")
+            return None
+        fsps = r.json().get("fsps") or []
     except Exception as e:
         print(f"[get_column_for_payment] API error: {e}")
         return None
@@ -3370,14 +3338,6 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
         for f in fsps
         if isinstance(f, dict) and f.get("programFspConfigurationName")
     ]
-    if not names:
-        print(
-            f"[get_column_for_payment] program {program_id} payment {payment_id}: "
-            "121 reported no FSP configuration"
-        )
-        return None
-
-    unknown = [n for n in names if n not in col_map]
     columns = {col_map[n] for n in names if n in col_map}
 
     if len(columns) == 1:
@@ -3387,12 +3347,8 @@ def get_column_for_payment(program_id, payment_id, col_map=None, token=None):
             f"[get_column_for_payment] payment {payment_id} spans FSP configs "
             f"{names} with conflicting columns {sorted(columns)} — cannot reconcile."
         )
-    else:
-        print(
-            f"[get_column_for_payment] program {program_id} payment {payment_id}: "
-            f"configs {unknown} not in column map {sorted(col_map)}"
-        )
     return None
+
 
 def get_121_token():
     import requests
@@ -3783,6 +3739,11 @@ def submit_payments():
         success_count = 0
         fail_count = 0
         failure_details = []
+        # paymentIds 121 did NOT accept. Returned to the device in the
+        # X-Failed-Payment-Ids header so it can (a) keep those rows pending
+        # instead of marking them submitted and (b) offer them as a CSV for
+        # manual reconciliation by the finance manager.
+        failed_pids = []
 
         for pid, items in grouped.items():
             # The header 121 expects is a property of THIS payment's FSP
@@ -3796,6 +3757,7 @@ def submit_payments():
 
             if not pay_column:
                 fail_count += 1
+                failed_pids.append(str(pid))
                 failure_details.append(
                     f"paymentId {pid}: could not determine its match column from "
                     "the 121 FSP configuration — not submitted"
@@ -3830,6 +3792,7 @@ def submit_payments():
                 )
             except requests.RequestException as e:
                 fail_count += 1
+                failed_pids.append(str(pid))
                 failure_details.append(f"paymentId {pid}: network error — {e}")
                 print(f"[ERROR] Network error submitting paymentId {pid}: {e}")
                 continue
@@ -3839,6 +3802,7 @@ def submit_payments():
                 print(f"[OK] Submitted to paymentId {pid}")
             elif upload_resp.status_code == 401 and user_attributed:
                 fail_count += 1
+                failed_pids.append(str(pid))
                 failure_details.append(
                     f"paymentId {pid}: your 121 login has expired — log out, log "
                     "back in and send again. Nothing was lost."
@@ -3846,6 +3810,7 @@ def submit_payments():
                 print(f"[ERROR] Operator token rejected (401) for paymentId {pid}")
             else:
                 fail_count += 1
+                failed_pids.append(str(pid))
                 snippet = (upload_resp.text or "")[:300]
                 failure_details.append(
                     f"paymentId {pid}: HTTP {upload_resp.status_code} — {snippet}"
@@ -3857,18 +3822,19 @@ def submit_payments():
         # -------------------------------
         # FINAL RESPONSE
         # -------------------------------
+        failed_header = {"X-Failed-Payment-Ids": ",".join(failed_pids)}
         if success_count > 0:
             msg = f"✅ Submitted to {success_count} paymentId(s)."
             if fail_count:
                 msg += f" ❌ {fail_count} failed: " + " | ".join(failure_details)
-            return msg, 200
+            return msg, 200, failed_header
         else:
             detail = (
                 " | ".join(failure_details)
                 if failure_details
                 else "no details available"
             )
-            return f"❌ All submissions failed. {detail}", 502
+            return f"❌ All submissions failed. {detail}", 502, failed_header
 
     except Exception as e:
         # Last-resort handler: surface a readable message to the frontend
